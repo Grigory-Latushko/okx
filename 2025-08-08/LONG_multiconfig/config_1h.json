@@ -32,11 +32,11 @@
   "ZEREBRO-USDT-SWAP","ZETA-USDT-SWAP","ZIL-USDT-SWAP","ZK-USDT-SWAP","ZRO-USDT-SWAP","ZRX-USDT-SWAP","BTC-USDC-SWAP","ETH-USDC-SWAP"
 ],
   "tp_percent": 1,
-  "sl_percent": 0.3,
+  "sl_percent": 0.5,
   "max_balance": 1000,
-  "candle_limit": 1000,
+  "candle_limit": 100,
   "position_size_usd": 10,
   "rerun_interval_s": 10,
-  "candle_period": "15m"
+  "candle_period": "1h"
 
 }
