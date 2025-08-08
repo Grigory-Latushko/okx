@@ -118,17 +118,66 @@ function Calculate-RSI($prices, $period) {
     return $rsi
 }
 
+function Calculate-MACD($prices, $fastPeriod = 12, $slowPeriod = 26, $signalPeriod = 9) {
+    $emaFast = Calculate-EMA $prices $fastPeriod
+    $emaSlow = Calculate-EMA $prices $slowPeriod
+    $macdLine = @()
+    for ($i = 0; $i -lt $prices.Count; $i++) {
+        $macdLine += $emaFast[$i] - $emaSlow[$i]
+    }
+    $signalLine = Calculate-EMA $macdLine $signalPeriod
+    return ,@($macdLine, $signalLine)
+}
+
+function Get-HTF-EMA($symbol, $period, $limit, $emaPeriod) {
+    $candles = Get-Candles $symbol $limit $period
+    if ($candles.Count -lt $emaPeriod) { return @() }
+    $closes = $candles | ForEach-Object { $_.Close }
+    return Calculate-EMA $closes $emaPeriod
+}
+
+function Calculate-ATR($candles, $period = 14) {
+    $trs = @()
+    for ($i = 1; $i -lt $candles.Count; $i++) {
+        $high = $candles[$i].High
+        $low = $candles[$i].Low
+        $prevClose = $candles[$i - 1].Close
+
+        $tr = [Math]::Max(
+            $high - $low,
+            [Math]::Max(
+                [Math]::Abs($high - $prevClose),
+                [Math]::Abs($low - $prevClose)
+            )
+        )
+        $trs += $tr
+}
+
+    # Рассчитаем ATR как SMA первых period TR и затем EMA по стандартной формуле
+    $atr = @()
+    $initialSMA = ($trs[0..($period-1)] | Measure-Object -Sum).Sum / $period
+    $atr += $initialSMA
+
+    $k = 2 / ($period + 1)
+    for ($i = $period; $i -lt $trs.Count; $i++) {
+        $value = $trs[$i] * $k + $atr[-1] * (1 - $k)
+        $atr += $value
+    }
+    return $atr
+}
+
+
 # === TRADE LOGIC ===
-function Open-Position($symbol, $entryPrice, $size, $tpPercent, $slPercent) {
+function Open-Position($symbol, $entryPrice, $size, $atr, $tpMultiplier, $slMultiplier) {
+    $tp = [Math]::Round($entryPrice + $atr * $tpMultiplier, 8)
+    $sl = [Math]::Round($entryPrice - $atr * $slMultiplier, 8)
+
     $positionCost = $entryPrice * $size
     if ($global:balance -lt $positionCost) {
         LogConsole "Недостаточно баланса для открытия позиции $symbol требуется $positionCost$, доступно $($global:balance)$" "WARN"
         return
     }
     $global:balance -= $positionCost
-
-    $tp = [Math]::Round($entryPrice * (1 + $tpPercent / 100), 8)
-    $sl = [Math]::Round($entryPrice * (1 - $slPercent / 100), 8)
 
     $position = [PSCustomObject]@{
         Symbol = $symbol
@@ -217,23 +266,55 @@ function Run-Bot {
 
     foreach ($symbol in $config.instruments) {
         if (CanOpenNew $symbol) {
+            # Получаем свечи основного таймфрейма
             $candles = Get-Candles $symbol $config.candle_limit $config.candle_period
-            if ($candles.Count -lt 21) { continue }
+            if ($candles.Count -lt 50) { continue }
 
             $closes = $candles | ForEach-Object { $_.Close }
+            $volumes = $candles | ForEach-Object { $_.Volume }
+
+            # Индикаторы на основном таймфрейме
             $ema9 = Calculate-EMA $closes 9
             $ema21 = Calculate-EMA $closes 21
             $rsi = Calculate-RSI $closes 14
+            $macdResult = Calculate-MACD $closes
+            $macd = $macdResult[0]
+            $macdSignal = $macdResult[1]
 
-            if (($ema9[-1] -gt $ema21[-1]) -and ($ema9[-2] -le $ema21[-2]) -and ($rsi[-1] -lt 70)) {
+            $avgVolume = ($volumes | Measure-Object -Average).Average
+
+            # EMA старшего таймфрейма (например, 1H)
+            $emaHTF = Get-HTF-EMA $symbol "1H" 50 21
+            if ($emaHTF.Count -eq 0) { continue }
+
+            # Расчёт ATR для адаптивного TP/SL
+            $atrArr = Calculate-ATR $candles 14
+            if ($atrArr.Count -eq 0) { continue }
+            $atr = $atrArr[-1]
+
+            # Условия для входа LONG
+            $emaCrossUp = ($ema9[-1] -gt $ema21[-1]) -and ($ema9[-2] -le $ema21[-2])
+            $macdBullish = $macd[-1] -gt $macdSignal[-1]
+            $rsiOk = $rsi[-1] -lt 70
+            $volumeOk = $volumes[-1] -gt $avgVolume
+            $htfTrendUp = $emaHTF[-1] -gt $emaHTF[-5]
+
+            if ($emaCrossUp -and $macdBullish -and $rsiOk -and $volumeOk -and $htfTrendUp) {
                 $price = Get-Last-Tick $symbol
+                if ($null -eq $price) { continue }
+
                 $size = [Math]::Round($config.position_size_usd / $price, 4)
-                Open-Position $symbol $price $size $config.tp_percent $config.sl_percent
+
+                # Множители для TP/SL (можно менять в config или прямо здесь)
+                $tpMultiplier = 2
+                $slMultiplier = 1
+
+                Open-Position $symbol $price $size $atr $tpMultiplier $slMultiplier
             }
         } else {
             Evaluate-Position $symbol
         }
-        Start-Sleep -Seconds 0.2
+        Start-Sleep -Milliseconds 200
     }
 }
 
