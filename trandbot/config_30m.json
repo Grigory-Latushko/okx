@@ -34,7 +34,7 @@
   "tp_percent": 1,
   "sl_percent": 0.4,
   "max_balance": 1000,
-  "candle_limit": 50,
+  "candle_limit": 100,
   "position_size_usd": 10,
   "rerun_interval_s": 10,
   "candle_period": "30m"
