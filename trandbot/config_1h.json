@@ -37,5 +37,5 @@
   "candle_limit": 50,
   "position_size_usd": 10,
   "rerun_interval_s": 10,
-  "candle_period": "30m"
+  "candle_period": "1h"
 }

@@ -15,6 +15,13 @@ $global:balance = $config.max_balance
 $global:totalPnL = 0
 $global:winCount = 0
 $global:totalClosed = 0
+$commissionRate = 0.0009  # 0.09%
+
+# Добавляем счётчики для Long/Short
+$global:longTotal = 0
+$global:longWins = 0
+$global:shortTotal = 0
+$global:shortWins = 0
 
 # === UTILS ===
 function Get-Timestamp { return [int][double]::Parse((Get-Date -UFormat %s)) }
@@ -116,6 +123,8 @@ function Calculate-ATR($candles, $period = 14) {
 }
 
 # === TRADE LOGIC ===
+$commissionRate = 0.0009  # 0.09%
+
 function Open-Position($symbol, $entryPrice, $size, $atr, $tpMultiplier, $slMultiplier, $side = "LONG") {
     if ($side -eq "LONG") {
         $tp = [Math]::Round($entryPrice + $atr * $tpMultiplier, 8)
@@ -129,11 +138,14 @@ function Open-Position($symbol, $entryPrice, $size, $atr, $tpMultiplier, $slMult
     }
 
     $positionCost = $entryPrice * $size
-    if ($global:balance -lt $positionCost) {
-        LogConsole "Недостаточно баланса для открытия позиции $symbol требуется $positionCost$, доступно $($global:balance)$" "WARN"
+    $commissionOpen = $positionCost * $commissionRate
+    $totalCost = $positionCost + $commissionOpen
+
+    if ($global:balance -lt $totalCost) {
+        LogConsole "Недостаточно баланса для открытия позиции $symbol требуется $totalCost$, доступно $($global:balance)$" "WARN"
         return
     }
-    $global:balance -= $positionCost
+    $global:balance -= $totalCost
 
     $position = [PSCustomObject]@{
         Symbol = $symbol
@@ -151,7 +163,7 @@ function Open-Position($symbol, $entryPrice, $size, $atr, $tpMultiplier, $slMult
     }
 
     $global:positions[$symbol] = $position
-    LogConsole "Открыта $side позиция ${symbol}: по $entryPrice (TP: $tp, SL: $sl, Size: $size), списано с баланса: $positionCost$" $side
+    LogConsole "Открыта $side позиция ${symbol}: по $entryPrice (TP: $tp, SL: $sl, Size: $size), списано с баланса: $totalCost$" $side
 }
 
 function Close-Position($symbol, $exitPrice, $reason) {
@@ -159,14 +171,19 @@ function Close-Position($symbol, $exitPrice, $reason) {
 
     if ($pos.Side -eq "LONG") {
         $pnl = ($exitPrice - $pos.EntryPrice) * $pos.Size
+        $global:longTotal++
+        if ($reason -eq "TP") { $global:longWins++ }
     } elseif ($pos.Side -eq "SHORT") {
         $pnl = ($pos.EntryPrice - $exitPrice) * $pos.Size
+        $global:shortTotal++
+        if ($reason -eq "TP") { $global:shortWins++ }
     } else {
         LogConsole "Unknown position side: $($pos.Side)" "ERROR"
         return
     }
 
-    $pnlRounded = [Math]::Round($pnl, 8)
+    $commissionClose = $exitPrice * $pos.Size * $commissionRate
+    $pnlRounded = [Math]::Round($pnl - $commissionClose, 8)
 
     $global:totalPnL += $pnlRounded
     $global:balance += ($pos.EntryPrice * $pos.Size) + $pnlRounded
@@ -189,11 +206,10 @@ function Close-Position($symbol, $exitPrice, $reason) {
 
 function Evaluate-Position($symbol) {
     if (-not $global:positions.ContainsKey($symbol)) { return }
-
     $pos = $global:positions[$symbol]
     if ($pos.Status -ne "OPEN") { return }
 
-    $candles = Get-Candles $symbol $config.candle_limit $config.candle_period
+    $candles = Get-Candles $symbol 100 "5m"
     if ($candles.Count -eq 0) { return }
 
     $openedAtTimestamp = $pos.OpenedAt
@@ -232,13 +248,13 @@ function CanOpenNew($symbol) {
 }
 
 function Run-Bot {
-    $winRate = if ($global:totalClosed -gt 0) {
-        [Math]::Round(($global:winCount / $global:totalClosed) * 100, 2)
-    } else {
-        0
-    }
+    $winRate = if ($global:totalClosed -gt 0) { [Math]::Round(($global:winCount / $global:totalClosed) * 100, 2) } else { 0 }
+    $longWinRate = if ($global:longTotal -gt 0) { [Math]::Round(($global:longWins / $global:longTotal) * 100, 2) } else { 0 }
+    $shortWinRate = if ($global:shortTotal -gt 0) { [Math]::Round(($global:shortWins / $global:shortTotal) * 100, 2) } else { 0 }
 
-    LogConsole "🔄 Новый цикл бота. Баланс: $($global:balance)$ | PnL: $($global:totalPnL) 💵 | WinRate: $winRate%" "INFO" 
+    $logMsg = "🔄 Новый цикл бота. Баланс: $($global:balance)$ | PnL: $($global:totalPnL) 💵 | WinRate: $winRate% | LongWinRate: ${longWinRate}% | ShortWinRate: ${shortWinRate}%"
+    LogConsole $logMsg "INFO"
+    Add-Content -Path $logFile -Value ("[$(Format-Time)][STATS] " + $logMsg)
 
     foreach ($symbol in $config.instruments) {
         if (CanOpenNew $symbol) {
@@ -254,11 +270,9 @@ function Run-Bot {
             if ($atrArr.Count -eq 0) { continue }
             $atr = $atrArr[-1]
 
-            # LONG
             $emaCrossUp = ($ema9[-1] -gt $ema21[-1]) -and ($ema9[-2] -le $ema21[-2])
             $ema21TrendUp = $ema21[-1] -gt $ema21[-6]
 
-            # SHORT
             $emaCrossDown = ($ema9[-1] -lt $ema21[-1]) -and ($ema9[-2] -ge $ema21[-2])
             $ema21TrendDown = $ema21[-1] -lt $ema21[-6]
 
@@ -266,7 +280,6 @@ function Run-Bot {
             if ($null -eq $price) { continue }
 
             $size = [Math]::Round($config.position_size_usd / $price, 4)
-
             $tpMultiplier = 2
             $slMultiplier = 1
 
