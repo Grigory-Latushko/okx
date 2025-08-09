@@ -17,6 +17,9 @@ $global:winCount = 0
 $global:totalClosed = 0
 $commissionRate = 0.0009  # 0.09%
 
+# Добавляем глобальные счетчики для винрейта по инструментам
+$global:instrumentTotal = @{}
+$global:instrumentWins = @{}
 
 # === UTILS ===
 function Get-Timestamp { return [int][double]::Parse((Get-Date -UFormat %s)) }
@@ -29,12 +32,12 @@ function LogConsole($msg, $type = "INFO") {
     Write-Host $full
 }
 
-function LogTrade($pos, $reason) {
+function LogTradeWithWinRate($pos, $reason, $winRate) {
     $openedAtStr = Format-Time-FromTS $pos.OpenedAt
     $closedAtStr = Format-Time-FromTS $pos.ClosedAt
     $timestamp = Format-Time
 
-    $logEntry = "[${timestamp}][TRADE] Закрыта позиция $($pos.Symbol) $($pos.Side) PnL: $($pos.PnL) Причина: $reason Баланс: $($global:balance)`n" +
+    $logEntry = "[${timestamp}][TRADE] Закрыта позиция $($pos.Symbol) $($pos.Side) PnL: $($pos.PnL) Причина: $reason Баланс: $($global:balance) WinRate инструмента: $winRate%`n" +
                 "  Открытие:     $openedAtStr`n" +
                 "  Закрытие:     $closedAtStr`n" +
                 "  Цена входа:   $($pos.EntryPrice)`n" +
@@ -181,22 +184,34 @@ function Close-Position($symbol, $exitPrice, $reason) {
     # Возвращаем изначальную стоимость позиции (без комиссии открытия) и прибыль с учетом комиссии закрытия
     $global:balance += ($pos.EntryPrice * $pos.Size) + $pnlRounded
 
+    # Обновляем статистику по инструменту
+    if (-not $global:instrumentTotal.ContainsKey($symbol)) {
+        $global:instrumentTotal[$symbol] = 0
+        $global:instrumentWins[$symbol] = 0
+    }
+    $global:instrumentTotal[$symbol]++
+    if ($reason -eq "TP") {
+        $global:winCount++
+        $global:instrumentWins[$symbol]++
+    }
+    $global:totalClosed++
+
     $pos.ExitPrice = $exitPrice
     $pos.PnL = $pnlRounded
     $pos.ClosedAt = Get-Timestamp
     $pos.Status = $reason
 
-    if ($reason -eq "TP") {
-        $global:winCount++
+    # Посчитать винрейт по инструменту
+    $instrumentWinRate = 0
+    if ($global:instrumentTotal[$symbol] -gt 0) {
+        $instrumentWinRate = [Math]::Round(($global:instrumentWins[$symbol] / $global:instrumentTotal[$symbol]) * 100, 2)
     }
-    $global:totalClosed++
 
-    LogConsole "Закрыта позиция ${symbol} ($($pos.Side)): по $exitPrice | PnL: $pnlRounded | Причина: $reason | Баланс: $($global:balance)" "CLOSE"
-    LogTrade $pos $reason
+    LogConsole "Закрыта позиция ${symbol} ($($pos.Side)): по $exitPrice | PnL: $pnlRounded | Причина: $reason | Баланс: $($global:balance) | WinRate инструмента: $instrumentWinRate%" "CLOSE"
+    LogTradeWithWinRate $pos $reason $instrumentWinRate
 
     $global:positions.Remove($symbol)
 }
-
 
 function Evaluate-Position($symbol) {
     if (-not $global:positions.ContainsKey($symbol)) { return }
