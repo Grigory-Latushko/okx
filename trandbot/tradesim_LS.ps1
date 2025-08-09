@@ -17,11 +17,6 @@ $global:winCount = 0
 $global:totalClosed = 0
 $commissionRate = 0.0009  # 0.09%
 
-# Добавляем счётчики для Long/Short
-$global:longTotal = 0
-$global:longWins = 0
-$global:shortTotal = 0
-$global:shortWins = 0
 
 # === UTILS ===
 function Get-Timestamp { return [int][double]::Parse((Get-Date -UFormat %s)) }
@@ -122,29 +117,6 @@ function Calculate-ATR($candles, $period = 14) {
     return $atr
 }
 
-function Get-EMA {
-    param (
-        [double[]]$prices,
-        [int]$period
-    )
-
-    if ($prices.Count -lt $period) {
-        return @()
-    }
-
-    $k = 2 / ($period + 1)
-    $ema = @()
-    $ema += ($prices[0..($period-1)] | Measure-Object -Average).Average  # начальное значение SMA
-
-    for ($i = $period; $i -lt $prices.Count; $i++) {
-        $emaValue = ($prices[$i] * $k) + ($ema[-1] * (1 - $k))
-        $ema += $emaValue
-    }
-
-    return $ema
-}
-
-
 # === TRADE LOGIC ===
 $commissionRate = 0.0009  # 0.09%
 
@@ -194,21 +166,19 @@ function Close-Position($symbol, $exitPrice, $reason) {
 
     if ($pos.Side -eq "LONG") {
         $pnl = ($exitPrice - $pos.EntryPrice) * $pos.Size
-        $global:longTotal++
-        if ($reason -eq "TP") { $global:longWins++ }
     } elseif ($pos.Side -eq "SHORT") {
         $pnl = ($pos.EntryPrice - $exitPrice) * $pos.Size
-        $global:shortTotal++
-        if ($reason -eq "TP") { $global:shortWins++ }
     } else {
         LogConsole "Unknown position side: $($pos.Side)" "ERROR"
         return
     }
 
     $commissionClose = $exitPrice * $pos.Size * $commissionRate
+
     $pnlRounded = [Math]::Round($pnl - $commissionClose, 8)
 
     $global:totalPnL += $pnlRounded
+    # Возвращаем изначальную стоимость позиции (без комиссии открытия) и прибыль с учетом комиссии закрытия
     $global:balance += ($pos.EntryPrice * $pos.Size) + $pnlRounded
 
     $pos.ExitPrice = $exitPrice
@@ -227,72 +197,59 @@ function Close-Position($symbol, $exitPrice, $reason) {
     $global:positions.Remove($symbol)
 }
 
-function Evaluate-Position {
-    param(
-        [string]$symbol,       # тикер
-        [string]$side,         # "buy" или "sell"
-        [array]$candles_M15,   # свечи M15 (рабочий ТФ)
-        [array]$candles_H1     # свечи H1 (старший ТФ)
-    )
 
-    $score = 0
+function Evaluate-Position($symbol) {
+    if (-not $global:positions.ContainsKey($symbol)) { return }
 
-    # === 1. Мульти-таймфрейм подтверждение тренда ===
-    $emaH1_fast = (Get-EMA $candles_H1.Close 20)[-1]
-    $emaH1_slow = (Get-EMA $candles_H1.Close 50)[-1]
+    $pos = $global:positions[$symbol]
+    if ($pos.Status -ne "OPEN") { return }
 
-    if (
-        ($side -eq "buy"  -and $emaH1_fast -gt $emaH1_slow) -or
-        ($side -eq "sell" -and $emaH1_fast -lt $emaH1_slow)
-    ) {
-        $score++
+    $candles = Get-Candles $symbol 100 "5m"   # 100 последних 5 минутных свечей
+    if ($candles.Count -eq 0) { return }
+
+    $openedAtTimestamp = $pos.OpenedAt
+    $candlesAfterOpen = $candles | Where-Object { $_.Timestamp -ge $openedAtTimestamp }
+
+    foreach ($candle in $candlesAfterOpen) {
+        if ($pos.Side -eq "LONG") {
+            if ($candle.High -ge $pos.TP) {
+                Close-Position $symbol $pos.TP "TP"
+                break
+            } elseif ($candle.Low -le $pos.SL) {
+                Close-Position $symbol $pos.SL "SL"
+                break
+            }
+        } elseif ($pos.Side -eq "SHORT") {
+            if ($candle.Low -le $pos.TP) {
+                Close-Position $symbol $pos.TP "TP"
+                break
+            } elseif ($candle.High -ge $pos.SL) {
+                Close-Position $symbol $pos.SL "SL"
+                break
+            }
+        }
     }
 
-    # === 2. Пересечение EMA на M15 ===
-    $emaM15_fast = (Get-EMA $candles_M15.Close 20)[-1]
-    $emaM15_slow = (Get-EMA $candles_M15.Close 50)[-1]
-
-    if (
-        ($side -eq "buy"  -and $emaM15_fast -gt $emaM15_slow) -or
-        ($side -eq "sell" -and $emaM15_fast -lt $emaM15_slow)
-    ) {
-        $score++
-    }
-
-    # === 3. Паттерн свечей ===
-    $lastCandle = $candles_M15[-1]
-
-    if (
-        ($side -eq "buy"  -and $lastCandle.Close -gt $lastCandle.Open) -or
-        ($side -eq "sell" -and $lastCandle.Close -lt $lastCandle.Open)
-    ) {
-        $score++
-    }
-
-    # === Итог ===
-    if ($score -ge 2) {
-        Write-Host "[INFO] $symbol | $side | Сигнал подтверждён ($score/3) — открываем сделку"
-        return $true
-    }
-    else {
-        Write-Host "[INFO] $symbol | $side | Сигнал слабый ($score/3) — пропуск"
-        return $false
+    if ($global:positions.ContainsKey($symbol)) {
+        $currentPrice = Get-Last-Tick $symbol
+        if ($null -ne $currentPrice) {
+            LogConsole "${symbol}: [Price: $currentPrice] → TP: $($pos.TP), SL: $($pos.SL)" "MONITOR"
+        }
     }
 }
-
 
 function CanOpenNew($symbol) {
     return (-not $global:positions.ContainsKey($symbol)) -and ($global:balance -ge $config.position_size_usd)
 }
 
 function Run-Bot {
-    $winRate = if ($global:totalClosed -gt 0) { [Math]::Round(($global:winCount / $global:totalClosed) * 100, 2) } else { 0 }
-    $longWinRate = if ($global:longTotal -gt 0) { [Math]::Round(($global:longWins / $global:longTotal) * 100, 2) } else { 0 }
-    $shortWinRate = if ($global:shortTotal -gt 0) { [Math]::Round(($global:shortWins / $global:shortTotal) * 100, 2) } else { 0 }
+    $winRate = if ($global:totalClosed -gt 0) {
+        [Math]::Round(($global:winCount / $global:totalClosed) * 100, 2)
+    } else {
+        0
+    }
 
-    $logMsg = "🔄 Новый цикл бота. Баланс: $($global:balance)$ | PnL: $($global:totalPnL) 💵 | WinRate: $winRate% | LongWinRate: ${longWinRate}% | ShortWinRate: ${shortWinRate}%"
-    LogConsole $logMsg "INFO"
-    Add-Content -Path $logFile -Value ("[$(Format-Time)][STATS] " + $logMsg)
+    LogConsole "🔄 Новый цикл бота. Баланс: $($global:balance)$ | PnL: $($global:totalPnL) 💵 | WinRate: $winRate%" "INFO" 
 
     foreach ($symbol in $config.instruments) {
         if (CanOpenNew $symbol) {
@@ -308,9 +265,11 @@ function Run-Bot {
             if ($atrArr.Count -eq 0) { continue }
             $atr = $atrArr[-1]
 
+            # LONG
             $emaCrossUp = ($ema9[-1] -gt $ema21[-1]) -and ($ema9[-2] -le $ema21[-2])
             $ema21TrendUp = $ema21[-1] -gt $ema21[-6]
 
+            # SHORT
             $emaCrossDown = ($ema9[-1] -lt $ema21[-1]) -and ($ema9[-2] -ge $ema21[-2])
             $ema21TrendDown = $ema21[-1] -lt $ema21[-6]
 
@@ -318,6 +277,7 @@ function Run-Bot {
             if ($null -eq $price) { continue }
 
             $size = [Math]::Round($config.position_size_usd / $price, 4)
+
             $tpMultiplier = 2
             $slMultiplier = 1
 
