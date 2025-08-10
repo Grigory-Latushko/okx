@@ -78,6 +78,32 @@ foreach ($symbol in $instruments) {
     }
 }
 
+#TP = min 1.5 SL
+# foreach ($symbol in $instruments) {
+#     Write-Host "Loading $symbol..."
+#     $candles = Get-HistoricalCandles $symbol $targetCandles
+#     if ($candles.Count -lt 50) {
+#         Write-Warning "Too few candles for $symbol ($($candles.Count))"
+#         continue
+#     }
+#     $best = $null
+#     foreach ($sl in $slRange) {
+#         foreach ($tp in $tpRange) {
+#             if ($tp -lt 1.5 * $sl) { continue }  # условие: TP минимум в 2 раза больше SL
+#             $res = Simulate-TP-SL $candles $tp $sl
+#             if ($best -eq $null -or $res.Profit -gt $best.Profit) {
+#                 $best = [PSCustomObject]@{TP=$tp; SL=$sl; Profit=$res.Profit; WinRate=$res.WinRate}
+#             }
+#         }
+#     }
+#     if ($best) {
+#         $results += [PSCustomObject]@{
+#             Symbol=$symbol; BestTP=$best.TP; BestSL=$best.SL; Profit=$best.Profit; WinRate=$best.WinRate
+#         }
+#     }
+# }
+
+
 $results | Sort-Object Profit -Descending | Tee-Object -Variable final | Format-Table -AutoSize
-$final | Export-Csv ".\best_tp_sl_full.csv" -NoTypeInformation -Encoding UTF8
+$final | Export-Csv ".\${bar}_best_tp_sl_full.csv" -NoTypeInformation -Encoding UTF8
 
