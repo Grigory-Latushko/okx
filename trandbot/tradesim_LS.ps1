@@ -207,7 +207,7 @@ function Close-Position($symbol, $exitPrice, $reason) {
         $instrumentWinRate = [Math]::Round(($global:instrumentWins[$symbol] / $global:instrumentTotal[$symbol]) * 100, 2)
     }
 
-    LogConsole "Закрыта позиция ${symbol} ($($pos.Side)): по $exitPrice | PnL: $pnlRounded | Причина: $reason | Баланс: $($global:balance) | WinRate инструмента: $instrumentWinRate%" "CLOSE"
+    LogConsole "Закрыта позиция ${symbol} ($($pos.Side)): по $exitPrice | PnL: $pnlRounded | Причина: $reason | Баланс: $($global:balance) | Сделок: $global:totalClosed | WinRate инструмента: $instrumentWinRate%" "CLOSE"
     LogTradeWithWinRate $pos $reason $instrumentWinRate
 
     $global:positions.Remove($symbol)
