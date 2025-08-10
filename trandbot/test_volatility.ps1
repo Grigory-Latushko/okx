@@ -3,7 +3,7 @@ $configPath = ".\config_15m.json"
 $config = Get-Content $configPath | ConvertFrom-Json
 $instruments = $config.instruments
 $bar = "15m"
-$targetCandles = 96 * 365  # например, 1 год = 96 свечей в день
+$targetCandles = 96 * 100  # например, 100 дней
 $delayMs = 200
 
 function Get-HistoricalCandles {
@@ -78,30 +78,30 @@ foreach ($symbol in $instruments) {
     }
 }
 
-#TP = min 1.5 SL
-# foreach ($symbol in $instruments) {
-#     Write-Host "Loading $symbol..."
-#     $candles = Get-HistoricalCandles $symbol $targetCandles
-#     if ($candles.Count -lt 50) {
-#         Write-Warning "Too few candles for $symbol ($($candles.Count))"
-#         continue
-#     }
-#     $best = $null
-#     foreach ($sl in $slRange) {
-#         foreach ($tp in $tpRange) {
-#             if ($tp -lt 1.5 * $sl) { continue }  # условие: TP минимум в 2 раза больше SL
-#             $res = Simulate-TP-SL $candles $tp $sl
-#             if ($best -eq $null -or $res.Profit -gt $best.Profit) {
-#                 $best = [PSCustomObject]@{TP=$tp; SL=$sl; Profit=$res.Profit; WinRate=$res.WinRate}
-#             }
-#         }
-#     }
-#     if ($best) {
-#         $results += [PSCustomObject]@{
-#             Symbol=$symbol; BestTP=$best.TP; BestSL=$best.SL; Profit=$best.Profit; WinRate=$best.WinRate
-#         }
-#     }
-# }
+TP = min 1.5 SL
+foreach ($symbol in $instruments) {
+    Write-Host "Loading $symbol..."
+    $candles = Get-HistoricalCandles $symbol $targetCandles
+    if ($candles.Count -lt 50) {
+        Write-Warning "Too few candles for $symbol ($($candles.Count))"
+        continue
+    }
+    $best = $null
+    foreach ($sl in $slRange) {
+        foreach ($tp in $tpRange) {
+            if ($tp -lt $sl) { continue }  # условие: TP минимум в 2 раза больше SL
+            $res = Simulate-TP-SL $candles $tp $sl
+            if ($best -eq $null -or $res.Profit -gt $best.Profit) {
+                $best = [PSCustomObject]@{TP=$tp; SL=$sl; Profit=$res.Profit; WinRate=$res.WinRate}
+            }
+        }
+    }
+    if ($best) {
+        $results += [PSCustomObject]@{
+            Symbol=$symbol; BestTP=$best.TP; BestSL=$best.SL; Profit=$best.Profit; WinRate=$best.WinRate
+        }
+    }
+}
 
 
 $results | Sort-Object Profit -Descending | Tee-Object -Variable final | Format-Table -AutoSize
