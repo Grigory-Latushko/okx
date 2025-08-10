@@ -1,59 +1,60 @@
-# === CONFIG ===
+# trade_bot.ps1
 param(
     [string]$configPath = ".\config.json"
 )
 
-# Имя лог-файла формируется на основе имени файла конфига
-$logFileName = [IO.Path]::GetFileNameWithoutExtension($configPath)
-$logFile = ".\${logFileName}_trades.log"
-
+# --- Загрузка конфига ---
 $config = Get-Content $configPath | ConvertFrom-Json
 
-# === STATE ===
+# --- Глобальные переменные ---
 $global:positions = @{}
 $global:balance = $config.max_balance
 $global:totalPnL = 0
 $global:winCount = 0
 $global:totalClosed = 0
-$commissionRate = 0.0009  # 0.09%
+$commissionRate = 0.0009
 
-# Добавляем глобальные счетчики для винрейта по инструментам
-$global:instrumentTotal = @{}
-$global:instrumentWins = @{}
+# Словарь для индивидуальных tp/sl для инструментов
+$tpSlParams = @{}
 
-# === UTILS ===
-function Get-Timestamp { return [int][double]::Parse((Get-Date -UFormat %s)) }
-function Format-Time { return (Get-Date -Format "yyyy-MM-dd HH:mm:ss") }
-function Format-Time-FromTS($ts) { return ([DateTimeOffset]::FromUnixTimeSeconds($ts)).LocalDateTime.ToString("yyyy-MM-dd HH:mm:ss") }
+# --- Функция для имитации поиска лучших TP и SL (замени своей) ---
+function Find-Best-TP-SL($symbol) {
+    # Здесь твоя реальная оптимизация
+    $bestTp = [math]::Round((Get-Random -Minimum 1.5 -Maximum 3.5), 2)
+    $bestSl = [math]::Round((Get-Random -Minimum 0.5 -Maximum 1.5), 2)
+    return @{ tp_percent = $bestTp; sl_percent = $bestSl }
+}
 
+# --- Логирование ---
 function LogConsole($msg, $type = "INFO") {
-    $ts = Format-Time
-    $full = "[$ts][$type] $msg"
-    Write-Host $full
+    $ts = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
+    Write-Host "[$ts][$type] $msg"
 }
 
 function LogTradeWithWinRate($pos, $reason, $winRate) {
-    $openedAtStr = Format-Time-FromTS $pos.OpenedAt
-    $closedAtStr = Format-Time-FromTS $pos.ClosedAt
-    $timestamp = Format-Time
+    $openedAtStr = ([DateTimeOffset]::FromUnixTimeSeconds($pos.OpenedAt)).LocalDateTime.ToString("yyyy-MM-dd HH:mm:ss")
+    $closedAtStr = ([DateTimeOffset]::FromUnixTimeSeconds($pos.ClosedAt)).LocalDateTime.ToString("yyyy-MM-dd HH:mm:ss")
+    $timestamp = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
 
-    $logEntry = "[${timestamp}][TRADE] Закрыта позиция $($pos.Symbol) $($pos.Side) PnL: $($pos.PnL) Причина: $reason Баланс: $($global:balance) WinRate инструмента: $winRate%`n" +
-                "  Открытие:     $openedAtStr`n" +
-                "  Закрытие:     $closedAtStr`n" +
-                "  Цена входа:   $($pos.EntryPrice)`n" +
-                "  Цена выхода:  $($pos.ExitPrice)`n"
+    $logEntry = @"
+[$timestamp][TRADE] Закрыта позиция $($pos.Symbol) $($pos.Side) PnL: $($pos.PnL) Причина: $reason Баланс: $($global:balance) WinRate инструмента: $winRate%
+  Открытие:     $openedAtStr
+  Закрытие:     $closedAtStr
+  Цена входа:   $($pos.EntryPrice)
+  Цена выхода:  $($pos.ExitPrice)
+"@
 
-    Add-Content -Path $logFile -Value $logEntry
+    Add-Content -Path "trade.log" -Value $logEntry
 }
 
-# === DATA FETCH ===
+# --- Получение данных с API OKX ---
 function Get-Last-Tick($symbol) {
     try {
         $url = "https://www.okx.com/api/v5/market/ticker?instId=$symbol"
         $res = Invoke-RestMethod -Uri $url -Method Get
         return [double]$res.data[0].last
     } catch {
-        LogConsole "Ошибка получения тика для ${symbol}: $($_)" "ERROR"
+        LogConsole "Ошибка получения тика для $symbol $_" "ERROR"
         return $null
     }
 }
@@ -73,17 +74,16 @@ function Get-Candles($symbol, $limit, $period) {
             }
         }
     } catch {
-        LogConsole "Ошибка получения свечей для ${symbol}: $($_)" "ERROR"
+        LogConsole "Ошибка получения свечей для $symbol $_" "ERROR"
         return @()
     }
 }
 
-# === INDICATORS ===
+# --- Индикаторы ---
 function Calculate-EMA($prices, $period) {
     $k = 2 / ($period + 1)
     $ema = @()
     $ema += $prices[0]
-
     for ($i = 1; $i -lt $prices.Count; $i++) {
         $value = $prices[$i] * $k + $ema[$i-1] * (1 - $k)
         $ema += $value
@@ -97,7 +97,6 @@ function Calculate-ATR($candles, $period = 14) {
         $high = $candles[$i].High
         $low = $candles[$i].Low
         $prevClose = $candles[$i - 1].Close
-
         $tr = [Math]::Max(
             $high - $low,
             [Math]::Max(
@@ -120,9 +119,7 @@ function Calculate-ATR($candles, $period = 14) {
     return $atr
 }
 
-# === TRADE LOGIC ===
-$commissionRate = 0.0009  # 0.09%
-
+# --- Открытие и закрытие позиций ---
 function Open-Position($symbol, $entryPrice, $size, $atr, $tpMultiplier, $slMultiplier, $side = "LONG") {
     if ($side -eq "LONG") {
         $tp = [Math]::Round($entryPrice + $atr * $tpMultiplier, 8)
@@ -153,7 +150,7 @@ function Open-Position($symbol, $entryPrice, $size, $atr, $tpMultiplier, $slMult
         Size = $size
         Side = $side
         Status = "OPEN"
-        OpenedAt = Get-Timestamp
+        OpenedAt = [int][double]::Parse((Get-Date -UFormat %s))
 
         ExitPrice = $null
         PnL = $null
@@ -161,10 +158,12 @@ function Open-Position($symbol, $entryPrice, $size, $atr, $tpMultiplier, $slMult
     }
 
     $global:positions[$symbol] = $position
-    LogConsole "Открыта $side позиция ${symbol}: по $entryPrice (TP: $tp, SL: $sl, Size: $size), списано с баланса: $totalCost$" $side
+    LogConsole "Открыта $side позиция $symbol по $entryPrice (TP: $tp, SL: $sl, Size: $size), списано с баланса: $totalCost$" $side
 }
 
 function Close-Position($symbol, $exitPrice, $reason) {
+    if (-not $global:positions.ContainsKey($symbol)) { return }
+
     $pos = $global:positions[$symbol]
 
     if ($pos.Side -eq "LONG") {
@@ -177,14 +176,12 @@ function Close-Position($symbol, $exitPrice, $reason) {
     }
 
     $commissionClose = $exitPrice * $pos.Size * $commissionRate
-
     $pnlRounded = [Math]::Round($pnl - $commissionClose, 8)
 
     $global:totalPnL += $pnlRounded
-    # Возвращаем изначальную стоимость позиции (без комиссии открытия) и прибыль с учетом комиссии закрытия
     $global:balance += ($pos.EntryPrice * $pos.Size) + $pnlRounded
 
-    # Обновляем статистику по инструменту
+    # Статистика по инструменту
     if (-not $global:instrumentTotal.ContainsKey($symbol)) {
         $global:instrumentTotal[$symbol] = 0
         $global:instrumentWins[$symbol] = 0
@@ -198,16 +195,15 @@ function Close-Position($symbol, $exitPrice, $reason) {
 
     $pos.ExitPrice = $exitPrice
     $pos.PnL = $pnlRounded
-    $pos.ClosedAt = Get-Timestamp
+    $pos.ClosedAt = [int][double]::Parse((Get-Date -UFormat %s))
     $pos.Status = $reason
 
-    # Посчитать винрейт по инструменту
     $instrumentWinRate = 0
     if ($global:instrumentTotal[$symbol] -gt 0) {
         $instrumentWinRate = [Math]::Round(($global:instrumentWins[$symbol] / $global:instrumentTotal[$symbol]) * 100, 2)
     }
 
-    LogConsole "Закрыта позиция ${symbol} ($($pos.Side)): по $exitPrice | PnL: $pnlRounded | Причина: $reason | Баланс: $($global:balance) | Сделок: $global:totalClosed | WinRate инструмента: $instrumentWinRate%" "CLOSE"
+    LogConsole "Закрыта позиция $symbol ($($pos.Side)): по $exitPrice | PnL: $pnlRounded | Причина: $reason | Баланс: $($global:balance) | Сделок: $global:instrumentTotal | WinRate инструмента: $instrumentWinRate%" "CLOSE"
     LogTradeWithWinRate $pos $reason $instrumentWinRate
 
     $global:positions.Remove($symbol)
@@ -219,7 +215,7 @@ function Evaluate-Position($symbol) {
     $pos = $global:positions[$symbol]
     if ($pos.Status -ne "OPEN") { return }
 
-    $candles = Get-Candles $symbol 100 "5m"   # 100 последних 5 минутных свечей
+    $candles = Get-Candles $symbol 100 "5m"
     if ($candles.Count -eq 0) { return }
 
     $openedAtTimestamp = $pos.OpenedAt
@@ -248,7 +244,7 @@ function Evaluate-Position($symbol) {
     if ($global:positions.ContainsKey($symbol)) {
         $currentPrice = Get-Last-Tick $symbol
         if ($null -ne $currentPrice) {
-            LogConsole "${symbol}: [Price: $currentPrice] → TP: $($pos.TP), SL: $($pos.SL)" "MONITOR"
+            LogConsole "$symbol [Price: $currentPrice] → TP: $($pos.TP), SL: $($pos.SL)" "MONITOR"
         }
     }
 }
@@ -257,6 +253,21 @@ function CanOpenNew($symbol) {
     return (-not $global:positions.ContainsKey($symbol)) -and ($global:balance -ge $config.position_size_usd)
 }
 
+# --- Инициализация статистики ---
+$global:instrumentTotal = @{}
+$global:instrumentWins = @{}
+
+
+# --- Запускаем оптимизацию TP/SL для каждого инструмента ---
+Write-Host "Запуск оптимизации TP/SL для инструментов..."
+foreach ($symbol in $config.instruments) {
+    $params = Find-Best-TP-SL $symbol
+    $tpSlParams[$symbol] = $params
+    Write-Host "Оптимизация $symbol TP=$($params.tp_percent)%, SL=$($params.sl_percent)%"
+}
+Write-Host "Оптимизация завершена. Запуск торгового бота..."
+
+# --- Главный цикл торговли ---
 function Run-Bot {
     $winRate = if ($global:totalClosed -gt 0) {
         [Math]::Round(($global:winCount / $global:totalClosed) * 100, 2)
@@ -264,7 +275,7 @@ function Run-Bot {
         0
     }
 
-    LogConsole "🔄 Новый цикл бота. Баланс: $($global:balance)$ | PnL: $($global:totalPnL) 💵 | WinRate: $winRate%" "INFO" 
+    LogConsole "🔄 Новый цикл бота. Баланс: $($global:balance)$ | PnL: $($global:totalPnL) | WinRate: $winRate%"
 
     foreach ($symbol in $config.instruments) {
         if (CanOpenNew $symbol) {
@@ -280,11 +291,9 @@ function Run-Bot {
             if ($atrArr.Count -eq 0) { continue }
             $atr = $atrArr[-1]
 
-            # LONG
             $emaCrossUp = ($ema9[-1] -gt $ema21[-1]) -and ($ema9[-2] -le $ema21[-2])
             $ema21TrendUp = $ema21[-1] -gt $ema21[-6]
 
-            # SHORT
             $emaCrossDown = ($ema9[-1] -lt $ema21[-1]) -and ($ema9[-2] -ge $ema21[-2])
             $ema21TrendDown = $ema21[-1] -lt $ema21[-6]
 
@@ -293,8 +302,18 @@ function Run-Bot {
 
             $size = [Math]::Round($config.position_size_usd / $price, 4)
 
-            $tpMultiplier = 2
-            $slMultiplier = 1
+            # Получаем параметры TP/SL для инструмента
+            if ($tpSlParams.ContainsKey($symbol)) {
+                $tpPercent = $tpSlParams[$symbol].tp_percent
+                $slPercent = $tpSlParams[$symbol].sl_percent
+            } else {
+                $tpPercent = $config.tp_percent
+                $slPercent = $config.sl_percent
+            }
+
+            # Переводим проценты TP/SL в множители ATR
+            $tpMultiplier = ($price * $tpPercent / 100) / $atr
+            $slMultiplier = ($price * $slPercent / 100) / $atr
 
             if ($emaCrossUp -and $ema21TrendUp) {
                 Open-Position $symbol $price $size $atr $tpMultiplier $slMultiplier "LONG"
@@ -308,9 +327,7 @@ function Run-Bot {
     }
 }
 
-# === MAIN LOOP ===
-if (Test-Path $logFile) { Remove-Item $logFile -Force }
-
+# --- Старт ---
 while ($true) {
     Run-Bot
     Start-Sleep -Seconds $config.rerun_interval_s
