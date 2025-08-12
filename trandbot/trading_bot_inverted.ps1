@@ -1,5 +1,5 @@
-# trading_bot_fixed.ps1
-# Исправленная версия бота: exposure по reserved margin, sanity caps, min stop, diagnostics.
+# trading_bot_inverted.ps1
+# Инвертированная версия бота: сигналы LONG <-> SHORT поменяны местами.
 param(
     [string]$configPath = ".\config.json"
 )
@@ -24,6 +24,9 @@ if (-not $config.PSObject.Properties.Name.Contains("min_avg_volume")) { $config 
 if (-not $config.PSObject.Properties.Name.Contains("allowed_instruments")) { $config | Add-Member -MemberType NoteProperty -Name allowed_instruments -Value $null }
 if (-not $config.PSObject.Properties.Name.Contains("max_notional_per_trade")) { $config | Add-Member -MemberType NoteProperty -Name max_notional_per_trade -Value ($config.position_size_usd * 20) }
 if (-not $config.PSObject.Properties.Name.Contains("min_stop_pct")) { $config | Add-Member -MemberType NoteProperty -Name min_stop_pct -Value 0.002 } # 0.2% минимальный стоп
+if (-not $config.PSObject.Properties.Name.Contains("tp_percent")) { $config | Add-Member -MemberType NoteProperty -Name tp_percent -Value 2 }
+if (-not $config.PSObject.Properties.Name.Contains("sl_percent")) { $config | Add-Member -MemberType NoteProperty -Name sl_percent -Value 1 }
+if (-not $config.PSObject.Properties.Name.Contains("loop_delay_seconds")) { $config | Add-Member -MemberType NoteProperty -Name loop_delay_seconds -Value 60 }
 
 # === STATE ===
 $global:positions = @{}                 # keyed by symbol
@@ -363,16 +366,24 @@ function Run-Bot {
             $requiredMargin = [double]([Math]::Round($notional / $leverage, 8))
             $commissionOpen = $notional * $commissionRate
 
-            # Расчёт TP и SL
+            # === INVERTED SIGNALS ===
+            # Раньше: emaCrossUp & ema21TrendUp -> LONG
+            # Теперь: invert -> emaCrossUp & ema21TrendUp -> SHORT
+            # TP/SL считаются зеркально в зависимости от направления.
+
             $tpMul = 2
             $slMul = 1
 
             if ($emaCrossUp -and $ema21TrendUp) {
-                $tp = [Math]::Round($price + $atr * $tpMul, 8)
-                $sl = [Math]::Round($price - $atr * $slMul, 8)
+                # Инвертированно: открываем SHORT
+                $tp = [Math]::Round($price - $atr * $tpMul, 8)   # TP для SHORT ниже цены
+                $sl = [Math]::Round($price + $atr * $slMul, 8)   # SL для SHORT выше цены
+                $signalSide = "SHORT"
             } elseif ($emaCrossDown -and $ema21TrendDown) {
-                $tp = [Math]::Round($price - $atr * $tpMul, 8)
-                $sl = [Math]::Round($price + $atr * $slMul, 8)
+                # Инвертированно: открываем LONG
+                $tp = [Math]::Round($price + $atr * $tpMul, 8)   # TP для LONG выше цены
+                $sl = [Math]::Round($price - $atr * $slMul, 8)   # SL для LONG ниже цены
+                $signalSide = "LONG"
             } else {
                 Evaluate-Position $symbol
                 Start-Sleep -Milliseconds 150
@@ -382,7 +393,7 @@ function Run-Bot {
             $stopPct = [Math]::Round(([Math]::Abs($price - $sl) / $price) * 100, 4)
             $tpPct = [Math]::Round(([Math]::Abs($tp - $price) / $price) * 100, 4)
 
-            LogConsole "$symbol Price=$price, Size=$size, StopDist=$stopDistance (мин $minStop), StopPct=$stopPct%, TP_Pct=$tpPct%" "DEBUG"
+            LogConsole "$symbol Price=$price, Size=$size, StopDist=$stopDistance (мин $minStop), StopPct=$stopPct%, TP_Pct=$tpPct% | Signal=$signalSide" "DEBUG"
 
             if ($global:balance -lt $requiredMargin + $commissionOpen) {
                 LogConsole "Недостаточно баланса для открытия позиции $symbol нужно $([Math]::Round($requiredMargin + $commissionOpen,8)), есть $([Math]::Round($global:balance,8))" "WARN"
@@ -390,9 +401,9 @@ function Run-Bot {
                 continue
             }
 
-            if ($emaCrossUp -and $ema21TrendUp) {
+            if ($signalSide -eq "LONG") {
                 Open-Position $symbol $price $size $tp $sl $requiredMargin $commissionOpen "LONG"
-            } elseif ($emaCrossDown -and $ema21TrendDown) {
+            } elseif ($signalSide -eq "SHORT") {
                 Open-Position $symbol $price $size $tp $sl $requiredMargin $commissionOpen "SHORT"
             }
 
