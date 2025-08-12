@@ -264,7 +264,7 @@ function Run-Bot {
         0
     }
 
-    LogConsole "🔄 Новый цикл бота. Баланс: $($global:balance)$ | PnL: $($global:totalPnL) 💵 | WinRate: $winRate%" "INFO" 
+    LogConsole "🔄 Новый цикл бота. Баланс: $($global:balance)$ | PnL: $($global:totalPnL) 💵 | Сделок: $global:totalClosed | WinRate: $winRate%" "INFO"
 
     foreach ($symbol in $config.instruments) {
         if (CanOpenNew $symbol) {
