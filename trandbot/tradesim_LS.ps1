@@ -142,7 +142,7 @@ function Calculate-RSI($prices, $period = 14) {
     $avgLoss = ($losses[0..($period-1)] | Measure-Object -Sum).Sum / $period
 
     $rsi = @()
-    $rsi += 100 - (100 / (1 + ($avgGain / [Math]::Max($avgLoss, 0.0000001))))
+    $rsi += [Math]::Round(100 - (100 / (1 + ($avgGain / [Math]::Max($avgLoss, 0.0000001)))), 3)
 
     for ($i = $period; $i -lt $gains.Count; $i++) {
         $avgGain = (($avgGain * ($period - 1)) + $gains[$i]) / $period
@@ -154,7 +154,7 @@ function Calculate-RSI($prices, $period = 14) {
             $rs = $avgGain / $avgLoss
         }
 
-        $rsi += 100 - (100 / (1 + $rs))
+        $rsi += [Math]::Round(100 - (100 / (1 + $rs)), 3)
     }
 
     return $rsi
@@ -326,11 +326,11 @@ function Run-Bot {
 
             # LONG
             $emaCrossUp = ($ema9[-1] -gt $ema21[-1]) -and ($ema9[-2] -le $ema21[-2])
-            $ema21TrendUp = $ema21[-1] -gt $ema21[-6]
+            $ema21TrendUp = $ema21[-1] -gt $ema21[-11]
 
             # SHORT
             $emaCrossDown = ($ema9[-1] -lt $ema21[-1]) -and ($ema9[-2] -ge $ema21[-2])
-            $ema21TrendDown = $ema21[-1] -lt $ema21[-6]
+            $ema21TrendDown = $ema21[-1] -lt $ema21[-11]
 
             $price = Get-Last-Tick $symbol
             if ($null -eq $price) { continue }
@@ -344,19 +344,21 @@ function Run-Bot {
             LogConsole "$symbol | Price: $price | EMA9: $($ema9[-1]) | EMA21: $($ema21[-1]) | RSI: $rsi | CrossUp: $emaCrossUp | TrendUp: $ema21TrendUp | CrossDown: $emaCrossDown | TrendDown: $ema21TrendDown" "DEBUG"
 
             # LONG
-            if ($emaCrossUp -and $ema21TrendUp -and ($rsi -lt $config.min_RSI)) {
+            # if ($emaCrossUp -and $ema21TrendUp -and ($rsi -lt $config.min_RSI)) {
+            if ($ema21TrendUp -and ($rsi -lt $config.min_RSI)) {
                 LogConsole "$symbol → Открытие LONG: EMA cross вверх, тренд вверх, RSI=$rsi < $($config.min_RSI)" "SIGNAL"
                 Open-Position $symbol $price $size $atr $tpMultiplier $slMultiplier "LONG"
 
             # SHORT
-            } elseif ($emaCrossDown -and $ema21TrendDown -and ($rsi -gt $config.max_RSI)) {
+            # } elseif ($emaCrossDown -and $ema21TrendDown -and ($rsi -gt $config.max_RSI)) {
+            } elseif ($ema21TrendDown -and ($rsi -gt $config.max_RSI)) {
                 LogConsole "$symbol → Открытие SHORT: EMA cross вниз, тренд вниз, RSI=$rsi > $($config.max_RSI)" "SIGNAL"
                 Open-Position $symbol $price $size $atr $tpMultiplier $slMultiplier "SHORT"
 
             } else {
                 # Если сделка не открыта, показываем причину
                 $reasons = @()
-                if (-not $emaCrossUp -and -not $emaCrossDown) { $reasons += "нет пересечения EMA" }
+                # if (-not $emaCrossUp -and -not $emaCrossDown) { $reasons += "нет пересечения EMA" }
                 if (-not $ema21TrendUp -and -not $ema21TrendDown) { $reasons += "нет тренда EMA21" }
                 if ($rsi -ge $config.min_RSI -and $rsi -le $config.max_RSI) { $reasons += "RSI в нейтральной зоне" }
                 LogConsole "$symbol → Сделка не открыта: $($reasons -join ', ')" "NO-TRADE"
