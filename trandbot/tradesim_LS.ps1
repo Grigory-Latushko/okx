@@ -42,7 +42,7 @@ function LogTradeWithWinRate($pos, $reason, $winRate) {
                 "  Закрытие:     $closedAtStr`n" +
                 "  Цена входа:   $($pos.EntryPrice)`n" +
                 "  Цена выхода:  $($pos.ExitPrice)`n" +
-                "🔄 Новый цикл бота. Баланс: $($global:balance)$ | PnL: $($global:totalPnL) 💵 | Сделок: $global:totalClosed | WinRate: $winRate%"
+                "🔄 Баланс: $($global:balance)$ | PnL: $($global:totalPnL) 💵 | Сделок: $global:totalClosed | WinRate: $winRate%"
 
     Add-Content -Path $logFile -Value $logEntry
 }
@@ -160,7 +160,6 @@ function Calculate-RSI($prices, $period = 14) {
     return $rsi
 }
 
-
 # === TRADE LOGIC ===
 $commissionRate = 0.0009  # 0.09%
 
@@ -202,7 +201,7 @@ function Open-Position($symbol, $entryPrice, $size, $atr, $tpMultiplier, $slMult
     }
 
     $global:positions[$symbol] = $position
-    LogConsole "Открыта $side позиция ${symbol}: по $entryPrice (TP: $tp, SL: $sl, Size: $size), списано с баланса: $totalCost$" $side
+    LogConsole "🚀 Открыта $side позиция ${symbol}: по $entryPrice (TP: $tp, SL: $sl, Size: $size), списано с баланса: $totalCost$" $side
 }
 
 function Close-Position($symbol, $exitPrice, $reason) {
@@ -248,7 +247,7 @@ function Close-Position($symbol, $exitPrice, $reason) {
         $instrumentWinRate = [Math]::Round(($global:instrumentWins[$symbol] / $global:instrumentTotal[$symbol]) * 100, 2)
     }
 
-    LogConsole "Закрыта позиция ${symbol} ($($pos.Side)): по $exitPrice | PnL: $pnlRounded | Причина: $reason | Баланс: $($global:balance) | Сделок: $global:totalClosed | WinRate инструмента: $instrumentWinRate%" "CLOSE"
+    LogConsole "✅ Закрыта позиция ${symbol} ($($pos.Side)): по $exitPrice | PnL: $pnlRounded | Причина: $reason | Баланс: $($global:balance) | Сделок: $global:totalClosed | WinRate инструмента: $instrumentWinRate%" "CLOSE"
     LogTradeWithWinRate $pos $reason $instrumentWinRate
 
     $global:positions.Remove($symbol)
@@ -341,13 +340,26 @@ function Run-Bot {
             $tpMultiplier = $config.tp_percent
             $slMultiplier = $config.sl_percent
 
-            # LONG: EMA пересечение + тренд + RSI ниже 30 (не перекуплен)
+            # Лог текущих индикаторов
+            LogConsole "$symbol | Price: $price | EMA9: $($ema9[-1]) | EMA21: $($ema21[-1]) | RSI: $rsi | CrossUp: $emaCrossUp | TrendUp: $ema21TrendUp | CrossDown: $emaCrossDown | TrendDown: $ema21TrendDown" "DEBUG"
+
+            # LONG
             if ($emaCrossUp -and $ema21TrendUp -and ($rsi -lt $config.min_RSI)) {
+                LogConsole "$symbol → Открытие LONG: EMA cross вверх, тренд вверх, RSI=$rsi < $($config.min_RSI)" "SIGNAL"
                 Open-Position $symbol $price $size $atr $tpMultiplier $slMultiplier "LONG"
 
-            # SHORT: EMA пересечение вниз + тренд вниз + RSI выше 70 (не перепродан)
+            # SHORT
             } elseif ($emaCrossDown -and $ema21TrendDown -and ($rsi -gt $config.max_RSI)) {
+                LogConsole "$symbol → Открытие SHORT: EMA cross вниз, тренд вниз, RSI=$rsi > $($config.max_RSI)" "SIGNAL"
                 Open-Position $symbol $price $size $atr $tpMultiplier $slMultiplier "SHORT"
+
+            } else {
+                # Если сделка не открыта, показываем причину
+                $reasons = @()
+                if (-not $emaCrossUp -and -not $emaCrossDown) { $reasons += "нет пересечения EMA" }
+                if (-not $ema21TrendUp -and -not $ema21TrendDown) { $reasons += "нет тренда EMA21" }
+                if ($rsi -ge $config.min_RSI -and $rsi -le $config.max_RSI) { $reasons += "RSI в нейтральной зоне" }
+                LogConsole "$symbol → Сделка не открыта: $($reasons -join ', ')" "NO-TRADE"
             }
 
         } else {
