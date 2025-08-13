@@ -41,7 +41,8 @@ function LogTradeWithWinRate($pos, $reason, $winRate) {
                 "  Открытие:     $openedAtStr`n" +
                 "  Закрытие:     $closedAtStr`n" +
                 "  Цена входа:   $($pos.EntryPrice)`n" +
-                "  Цена выхода:  $($pos.ExitPrice)`n"
+                "  Цена выхода:  $($pos.ExitPrice)`n" +
+                "🔄 Новый цикл бота. Баланс: $($global:balance)$ | PnL: $($global:totalPnL) 💵 | Сделок: $global:totalClosed | WinRate: $winRate%"
 
     Add-Content -Path $logFile -Value $logEntry
 }
@@ -119,6 +120,46 @@ function Calculate-ATR($candles, $period = 14) {
     }
     return $atr
 }
+
+function Calculate-RSI($prices, $period = 14) {
+    if ($prices.Count -le $period) { return @() }
+
+    $gains = @()
+    $losses = @()
+
+    for ($i = 1; $i -lt $prices.Count; $i++) {
+        $change = $prices[$i] - $prices[$i - 1]
+        if ($change -gt 0) {
+            $gains += $change
+            $losses += 0
+        } else {
+            $gains += 0
+            $losses += [Math]::Abs($change)
+        }
+    }
+
+    $avgGain = ($gains[0..($period-1)] | Measure-Object -Sum).Sum / $period
+    $avgLoss = ($losses[0..($period-1)] | Measure-Object -Sum).Sum / $period
+
+    $rsi = @()
+    $rsi += 100 - (100 / (1 + ($avgGain / [Math]::Max($avgLoss, 0.0000001))))
+
+    for ($i = $period; $i -lt $gains.Count; $i++) {
+        $avgGain = (($avgGain * ($period - 1)) + $gains[$i]) / $period
+        $avgLoss = (($avgLoss * ($period - 1)) + $losses[$i]) / $period
+
+        if ($avgLoss -eq 0) {
+            $rs = [double]::PositiveInfinity
+        } else {
+            $rs = $avgGain / $avgLoss
+        }
+
+        $rsi += 100 - (100 / (1 + $rs))
+    }
+
+    return $rsi
+}
+
 
 # === TRADE LOGIC ===
 $commissionRate = 0.0009  # 0.09%
@@ -276,6 +317,10 @@ function Run-Bot {
             $ema9 = Calculate-EMA $closes 9
             $ema21 = Calculate-EMA $closes 21
 
+            $rsiArr = Calculate-RSI $closes 14
+            if ($rsiArr.Count -eq 0) { continue }
+            $rsi = $rsiArr[-1]
+
             $atrArr = Calculate-ATR $candles 14
             if ($atrArr.Count -eq 0) { continue }
             $atr = $atrArr[-1]
@@ -293,18 +338,22 @@ function Run-Bot {
 
             $size = [Math]::Round($config.position_size_usd / $price, 4)
 
-            $tpMultiplier = 2
-            $slMultiplier = 1
+            $tpMultiplier = $config.tp_percent
+            $slMultiplier = $config.sl_percent
 
-            if ($emaCrossUp -and $ema21TrendUp) {
+            # LONG: EMA пересечение + тренд + RSI ниже 30 (не перекуплен)
+            if ($emaCrossUp -and $ema21TrendUp -and ($rsi -lt $config.min_RSI)) {
                 Open-Position $symbol $price $size $atr $tpMultiplier $slMultiplier "LONG"
-            } elseif ($emaCrossDown -and $ema21TrendDown) {
+
+            # SHORT: EMA пересечение вниз + тренд вниз + RSI выше 70 (не перепродан)
+            } elseif ($emaCrossDown -and $ema21TrendDown -and ($rsi -gt $config.max_RSI)) {
                 Open-Position $symbol $price $size $atr $tpMultiplier $slMultiplier "SHORT"
             }
+
         } else {
             Evaluate-Position $symbol
         }
-        Start-Sleep -Milliseconds 200
+        Start-Sleep -Milliseconds 100
     }
 }
 
