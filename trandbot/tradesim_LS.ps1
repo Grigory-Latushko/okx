@@ -120,6 +120,37 @@ function Calculate-ATR($candles, $period = 14) {
     return $atr
 }
 
+function Calculate-RSI($prices, $period = 14) {
+    $gains = @()
+    $losses = @()
+
+    for ($i = 1; $i -lt $prices.Count; $i++) {
+        $change = $prices[$i] - $prices[$i - 1]
+        if ($change -gt 0) {
+            $gains += $change
+            $losses += 0
+        } else {
+            $gains += 0
+            $losses += -$change
+        }
+    }
+
+    $avgGain = ($gains[0..($period - 1)] | Measure-Object -Sum).Sum / $period
+    $avgLoss = ($losses[0..($period - 1)] | Measure-Object -Sum).Sum / $period
+
+    $rsi = @()
+    $rs = if ($avgLoss -eq 0) { 0 } else { $avgGain / $avgLoss }
+    $rsi += if ($avgLoss -eq 0) { 100 } else { 100 - (100 / (1 + $rs)) }
+
+    for ($i = $period; $i -lt $gains.Count; $i++) {
+        $avgGain = (($avgGain * ($period - 1)) + $gains[$i]) / $period
+        $avgLoss = (($avgLoss * ($period - 1)) + $losses[$i]) / $period
+        $rs = if ($avgLoss -eq 0) { 0 } else { $avgGain / $avgLoss }
+        $rsi += if ($avgLoss -eq 0) { 100 } else { 100 - (100 / (1 + $rs)) }
+    }
+    return $rsi
+}
+
 # === TRADE LOGIC ===
 $commissionRate = 0.0009  # 0.09%
 
@@ -264,7 +295,7 @@ function Run-Bot {
         0
     }
 
-    LogConsole "🔄 Новый цикл бота. Баланс: $($global:balance)$ | PnL: $($global:totalPnL) 💵 | WinRate: $winRate%" "INFO" 
+    LogConsole "🔄 Новый цикл бота. Баланс: $($global:balance)$ | PnL: $($global:totalPnL) 💵 | СДЕЛОК $global:totalClosed | WinRate: $winRate%" "INFO" 
 
     foreach ($symbol in $config.instruments) {
         if (CanOpenNew $symbol) {
@@ -279,6 +310,10 @@ function Run-Bot {
             $atrArr = Calculate-ATR $candles 14
             if ($atrArr.Count -eq 0) { continue }
             $atr = $atrArr[-1]
+
+            $rsiArr = Calculate-RSI $closes 14
+            if ($rsiArr.Count -eq 0) { continue }
+            $rsi = $rsiArr[-1]
 
             # LONG
             $emaCrossUp = ($ema9[-1] -gt $ema21[-1]) -and ($ema9[-2] -le $ema21[-2])
@@ -296,9 +331,10 @@ function Run-Bot {
             $tpMultiplier = 2
             $slMultiplier = 1
 
-            if ($emaCrossUp -and $ema21TrendUp) {
+            # Добавляем условие по RSI: LONG если RSI < 30, SHORT если RSI > 70
+            if ($emaCrossUp -and $ema21TrendUp -and $rsi -lt 30) {
                 Open-Position $symbol $price $size $atr $tpMultiplier $slMultiplier "LONG"
-            } elseif ($emaCrossDown -and $ema21TrendDown) {
+            } elseif ($emaCrossDown -and $ema21TrendDown -and $rsi -gt 70) {
                 Open-Position $symbol $price $size $atr $tpMultiplier $slMultiplier "SHORT"
             }
         } else {
