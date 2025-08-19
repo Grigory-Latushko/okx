@@ -33,7 +33,7 @@
 ],
   "tp_percent": 2,
   "sl_percent": 1,
-  "min_RSI": 30,
+  "min_RSI": 25,
   "max_RSI": 70,
   "max_balance": 1000,
   "candle_limit": 100,

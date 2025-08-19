@@ -33,16 +33,16 @@ function LogConsole($msg, $type = "INFO") {
 }
 
 function LogTradeWithWinRate($pos, $reason, $winRate) {
-    $openedAtStr = Format-Time-FromTS $pos.OpenedAt
-    $closedAtStr = Format-Time-FromTS $pos.ClosedAt
+    # $openedAtStr = Format-Time-FromTS $pos.OpenedAt
+    # $closedAtStr = Format-Time-FromTS $pos.ClosedAt
     $timestamp = Format-Time
 
     $logEntry = "[${timestamp}][TRADE] Закрыта позиция $($pos.Symbol) $($pos.Side) PnL: $($pos.PnL) Причина: $reason Баланс: $($global:balance) WinRate инструмента: $winRate%`n" +
-                "  Открытие:     $openedAtStr`n" +
-                "  Закрытие:     $closedAtStr`n" +
-                "  Цена входа:   $($pos.EntryPrice)`n" +
-                "  Цена выхода:  $($pos.ExitPrice)`n" +
-                "🔄 Баланс: $($global:balance)$ | PnL: $($global:totalPnL) 💵 | Сделок: $global:totalClosed | WinRate: $winRate%"
+                # "  Открытие:     $openedAtStr`n" +
+                # "  Закрытие:     $closedAtStr`n" +
+                # "  Цена входа:   $($pos.EntryPrice)`n" +
+                # "  Цена выхода:  $($pos.ExitPrice)`n" +
+                "🔄 Баланс: $($global:balance)$ | PnL: $($global:totalPnL) 💵 | Сделок: $global:totalClosed"
 
     Add-Content -Path $logFile -Value $logEntry
 }
@@ -340,17 +340,17 @@ function Run-Bot {
             $shortSignal = ($rsiPrev -gt $config.max_RSI) -and ($rsiCurr -le $config.max_RSI)
 
             if ($longSignal) {
-                LogConsole "$symbol → Открытие LONG: RSI пересек min_RSI ($($config.min_RSI)) снизу вверх: $rsiPrev → $rsiCurr" "SIGNAL"
+                LogConsole "$symbol → Открытие 📈 LONG: RSI пересек min_RSI ($($config.min_RSI)) снизу вверх: $rsiPrev → $rsiCurr" "SIGNAL"
                 Open-Position $symbol $price $size $atr $tpMultiplier $slMultiplier "LONG"
 
             } elseif ($shortSignal) {
-                LogConsole "$symbol → Открытие SHORT: RSI пересек max_RSI ($($config.max_RSI)) сверху вниз: $rsiPrev → $rsiCurr" "SIGNAL"
+                LogConsole "$symbol → Открытие 📉 SHORT: RSI пересек max_RSI ($($config.max_RSI)) сверху вниз: $rsiPrev → $rsiCurr" "SIGNAL"
                 Open-Position $symbol $price $size $atr $tpMultiplier $slMultiplier "SHORT"
 
             } else {
                 $reasons = @()
                 if (-not $longSignal -and -not $shortSignal) { $reasons += "нет пересечения RSI" }
-                LogConsole "$symbol → Сделка не открыта: $($reasons -join ', ')" "NO-TRADE"
+                # LogConsole "$symbol → Сделка не открыта: $($reasons -join ', ')" "NO-TRADE"
             }
 
         } else {
@@ -359,7 +359,6 @@ function Run-Bot {
         Start-Sleep -Milliseconds 100
     }
 }
-
 
 # === MAIN LOOP ===
 if (Test-Path $logFile) { Remove-Item $logFile -Force }
