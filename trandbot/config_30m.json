@@ -31,8 +31,8 @@
   "WAXP-USDT-SWAP","WCT-USDT-SWAP","WIF-USDT-SWAP","WLD-USDT-SWAP","WOO-USDT-SWAP","XAUT-USDT-SWAP","XLM-USDT-SWAP","XTZ-USDT-SWAP","YFI-USDT-SWAP","YGG-USDT-SWAP","ZENT-USDT-SWAP",
   "ZEREBRO-USDT-SWAP","ZETA-USDT-SWAP","ZIL-USDT-SWAP","ZK-USDT-SWAP","ZRO-USDT-SWAP","ZRX-USDT-SWAP","BTC-USDC-SWAP","ETH-USDC-SWAP"
 ],
-  "tp_percent": 3,
-  "sl_percent": 2,
+  "tp_percent": 2,
+  "sl_percent": 1,
   "min_RSI": 30,
   "max_RSI": 70,
   "max_balance": 1000,
