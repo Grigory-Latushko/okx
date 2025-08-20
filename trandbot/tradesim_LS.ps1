@@ -203,7 +203,6 @@ function Open-Position($symbol, $entryPrice, $size, $atr, $tpMultiplier, $slMult
     $global:positions[$symbol] = $position
     LogConsole "🚀 Открыта $side позиция ${symbol}: по $entryPrice (TP: $tp, SL: $sl, Size: $size), списано с баланса: $totalCost$" $side
 }
-
 function Close-Position($symbol, $exitPrice, $reason) {
     $pos = $global:positions[$symbol]
 
@@ -336,8 +335,8 @@ function Run-Bot {
             $slMultiplier = $config.sl_percent
 
             # Условия входа по пересечению RSI
-            $longSignal  = ($rsiPrev -lt $config.min_RSI) -and ($rsiCurr -ge $config.min_RSI)
-            $shortSignal = ($rsiPrev -gt $config.max_RSI) -and ($rsiCurr -le $config.max_RSI)
+            $longSignal  = ($rsiPrev -lt $config.min_RSI) -and ($rsiCurr -ge $config.min_RSI) -and ($Close -gt $EMA21)
+            $shortSignal = ($rsiPrev -gt $config.max_RSI) -and ($rsiCurr -le $config.max_RSI) -and ($Close -lt $EMA21)
 
             if ($longSignal) {
                 LogConsole "$symbol → Открытие 📈 LONG: RSI пересек min_RSI ($($config.min_RSI)) снизу вверх: $rsiPrev → $rsiCurr" "SIGNAL"
