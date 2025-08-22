@@ -16,6 +16,7 @@ $global:totalPnL = 0
 $global:winCount = 0
 $global:totalClosed = 0
 $commissionRate = 0.0009  # 0.09%
+$evaluate_candle_period = $config.evaluate_candle_period
 
 # Добавляем глобальные счетчики для винрейта по инструментам
 $global:instrumentTotal = @{}
@@ -258,7 +259,7 @@ function Evaluate-Position($symbol) {
     $pos = $global:positions[$symbol]
     if ($pos.Status -ne "OPEN") { return }
 
-    $candles = Get-Candles $symbol 100 "5m"   # 100 последних 5 минутных свечей
+    $candles = Get-Candles $symbol 100 $evaluate_candle_period   # 100 последних $evaluate_candle_period минутных свечей
     if ($candles.Count -eq 0) { return }
 
     $openedAtTimestamp = $pos.OpenedAt
