@@ -36,9 +36,9 @@
   "min_RSI": 30,
   "max_RSI": 70,
   "max_balance": 1000,
-  "candle_limit": 100,
+  "candle_limit": 120,
   "position_size_usd": 10,
   "rerun_interval_s": 10,
   "candle_period": "5m",
-  "evaluate_candle_period": "5m"
+  "evaluate_candle_period": "1m"
 }
