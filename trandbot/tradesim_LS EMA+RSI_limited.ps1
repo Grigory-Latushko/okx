@@ -5,7 +5,7 @@ param(
 
 # Имя лог-файла формируется на основе имени файла конфига
 $logFileName = [IO.Path]::GetFileNameWithoutExtension($configPath)
-$logFile = ".\${logFileName}_trades.log"
+$logFile = ".\${logFileName}_trades_EMA+RSI_LIMITED.log"
 
 $config = Get-Content $configPath | ConvertFrom-Json
 
@@ -217,6 +217,28 @@ function Calculate-ConnorsRSI {
     return $crsi
 }
 
+function Get-Trend($candles, $atrPeriod = 14, $trend_candles) {
+    if ($candles.Count -lt 14) { return "FLAT" }
+
+    # Берём 4 последних свечей
+    $lastCloses = ($candles | Sort-Object Timestamp | Select-Object -Last $trend_candles | ForEach-Object { $_.Close })
+
+    # Разница между последней и trend_candles с конца
+    $delta = $lastCloses[-1] - $lastCloses[0]
+
+    # ATR для тренда (можно взять последний ATR)
+    $atrArr = Calculate-ATR $candles $atrPeriod
+    if ($atrArr.Count -eq 0) { return "FLAT" }
+    $atr = $atrArr[-1]
+
+    if ($delta -gt $atr) {
+        return "UP"
+    } elseif ($delta -lt -$atr) {
+        return "DOWN"
+    } else {
+        return "FLAT"
+    }
+}
 
 # === TRADE LOGIC ===
 
@@ -374,7 +396,7 @@ function Run-Bot {
             $ema9  = Calculate-EMA $closes 9
             $ema21 = Calculate-EMA $closes 21
 
-            # Получаем массив RSI
+        # Получаем массив RSI
             # $rsiArr = Calculate-RSI $closes 14
             # if ($rsiArr.Count -lt 2) { continue }
 
@@ -382,7 +404,7 @@ function Run-Bot {
             # $rsiPrev = $rsiArr[-2]
             # $rsiCurr = $rsiArr[-1]
 
-            # Connors RSI вместо обычного RSI
+        # Connors RSI вместо обычного RSI
             $rsiArr = Calculate-ConnorsRSI -closes $closes -rsiPeriod 3 -streakPeriod 2 -rankPeriod 100
             if ($rsiArr.Count -lt 2) { continue }
 
@@ -402,17 +424,22 @@ function Run-Bot {
             $lastEMA21 = $ema21[-1]
             $min_RSI = $config.min_RSI
             $max_RSI = $config.max_RSI
+            $trend_candles = $config.trend_candles
 
-            # Условия входа по пересечению RSI
-            $longSignal  = ($rsiPrev -lt $config.min_RSI) -and ($rsiCurr -ge $config.min_RSI) -and ($price -gt $ema21[-1])
-            $shortSignal = ($rsiPrev -gt $config.max_RSI) -and ($rsiCurr -le $config.max_RSI) -and ($price -lt $ema21[-1])
+        # Условия входа по пересечению RSI
+
+            $trend = Get-Trend -candles $candles -atrPeriod 14 -trend_candles $trend_candles
+            $longSignal  = $price -gt $ema21[-1] -and ($rsiCurr -le $min_RSI) -and ($trend -eq "UP")
+            $shortSignal = $price -lt $ema21[-1] -and ($rsiCurr -ge $max_RSI) -and ($trend -eq "DOWN")
 
             if ($longSignal) {
-                LogConsole "$symbol → Открытие 📈 LONG: RSI пересек min_RSI ($($config.min_RSI)) снизу вверх: $rsiPrev → $rsiCurr EMA21 = $lastEMA21" "SIGNAL"
+                # LogConsole "$symbol → Открытие 📈 LONG: RSI пересек min_RSI ($($config.min_RSI)) снизу вверх: $rsiPrev → $rsiCurr EMA21 = $lastEMA21" "SIGNAL"
+                LogConsole "$symbol → Открытие 📈 LONG: RSI = $rsiCurr EMA21 = $lastEMA21" "SIGNAL"
                 Open-Position $symbol $price $size $atr $tpMultiplier $slMultiplier "LONG"
 
             } elseif ($shortSignal) {
-                LogConsole "$symbol → Открытие 📉 SHORT: RSI пересек max_RSI ($($config.max_RSI)) сверху вниз: $rsiPrev → $rsiCurr EMA21 = $lastEMA21" "SIGNAL"
+                # LogConsole "$symbol → Открытие 📉 SHORT: RSI пересек max_RSI ($($config.max_RSI)) сверху вниз: $rsiPrev → $rsiCurr EMA21 = $lastEMA21" "SIGNAL"
+                LogConsole "$symbol → Открытие 📉 SHORT: RSI = $rsiCurr EMA21 = $lastEMA21" "SIGNAL"
                 Open-Position $symbol $price $size $atr $tpMultiplier $slMultiplier "SHORT"
 
             } else {
@@ -423,7 +450,7 @@ function Run-Bot {
 
                 if ($reasons.Count -gt 0) {
                     # LogConsole "$symbol → Сделка не открыта: $($reasons -join ', ')" "NO-TRADE"
-                    # Write-Host "price= $price lastEMA21= $lastEMA21 rsiCurr= $rsiCurr rsiPrev= $rsiPrev min_RSI= $min_RSI max_RSI= $max_RSI"
+                    # Write-Host "price= $price lastEMA21= $lastEMA21 rsiCurr= $rsiCurr rsiPrev= $rsiPrev"
                 }
             }
 
