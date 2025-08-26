@@ -1,0 +1,10 @@
+{
+  "instruments": ["BTC-USD-SWAP","ETH-USD-SWAP","SOL-USD-SWAP"],
+  "candle_period": "15m",
+  "tp_percent": 4,
+  "sl_percent": 2,
+  "position_size_usd": 10,
+  "api_key": "6f844543-0eca-472f-9450-5f6bd694dfc2",
+  "secret_key": "85368B7E5E70A8B71FF7E9AA1145551B",
+  "passphrase": "your_passphrase"
+}

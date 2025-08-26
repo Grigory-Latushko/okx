@@ -1,0 +1,30 @@
+# Global config
+exchange:
+  name: okx
+  demo: ${OKX_TESTNET:false}         # "true" or "false" via env var
+  rate_limit_ms: 200
+
+data:
+  cache_dir: ./cache
+  max_fetch_ohlcv: 1000
+
+strategy:
+  features:
+    - sma_14
+    - sma_50
+    - rsi_14
+    - ret_1
+  target: "fwd_ret_1"        # next-period return
+  label: "up"                 # classification: fwd_ret_1 > 0
+  model: random_forest
+
+risk:
+  max_notional_usdt: 100      # hard cap per trade
+  max_daily_loss_usdt: 100    # stop trading if breached
+  stop_loss_pct: 0.006        # 0.6%
+  take_profit_pct: 0.012      # 1.2%
+  cooldown_bars: 2
+  allow_live_orders: false     # safety switch
+
+logging:
+  level: INFO
