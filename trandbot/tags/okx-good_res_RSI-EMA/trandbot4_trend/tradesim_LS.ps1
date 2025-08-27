@@ -190,9 +190,9 @@ function Get-Trend {
     $delta = $lastCloses[-1] - $lastCloses[0]
 
     # Определяем тренд с порогом 1 ATR
-    if ($delta -gt $lastAtr) {
+    if ($delta -gt $lastAtr*$trendsize) {
         return "UP"
-    } elseif ($delta -lt -$lastAtr) {
+    } elseif ($delta -lt -$lastAtr*$trendsize) {
         return "DOWN"
     } else {
         return "NEUTRAL"
