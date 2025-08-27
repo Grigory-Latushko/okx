@@ -168,27 +168,35 @@ function Get-Trend {
         [int]$trend_candles
     )
 
+    # Проверка, есть ли достаточно свечей
     if (-not $candles -or $candles.Count -lt $trend_candles) {
         return "NEUTRAL"
     }
 
+    # Рассчитываем ATR
     $atrArr = Calculate-ATR $candles $atrPeriod
+    if (-not $atrArr -or $atrArr.Count -eq 0) {
+        return "NEUTRAL"
+    }
     $lastAtr = $atrArr[-1]
 
+    # Берём закрытия последних свечей
     $lastCloses = $candles | Sort-Object Timestamp | Select-Object -Last $trend_candles | ForEach-Object { $_.Close }
-
-    if ($null -eq $lastCloses -or $lastCloses.Count -lt 2) {
+    if (-not $lastCloses -or $lastCloses.Count -lt 2) {
         return "NEUTRAL"
     }
 
+    # Рассчитываем дельту
     $delta = $lastCloses[-1] - $lastCloses[0]
 
-    if ([math]::Abs($delta) -gt $lastAtr) {
-        if ($delta -gt 0) { return "UP" }
-        elseif ($delta -lt 0) { return "DOWN" }
+    # Определяем тренд с порогом 1 ATR
+    if ($delta -gt $lastAtr) {
+        return "UP"
+    } elseif ($delta -lt -$lastAtr) {
+        return "DOWN"
+    } else {
+        return "NEUTRAL"
     }
-
-    return "NEUTRAL"
 }
 
 
@@ -235,6 +243,7 @@ function Open-Position($symbol, $entryPrice, $size, $atr, $tpMultiplier, $slMult
     $global:positions[$symbol] = $position
     LogConsole "🚀 Открыта $side позиция ${symbol}: по $entryPrice (TP: $tp, SL: $sl, Size: $size), списано с баланса: $totalCost$" $side
 }
+
 function Close-Position($symbol, $exitPrice, $reason) {
     $pos = $global:positions[$symbol]
 

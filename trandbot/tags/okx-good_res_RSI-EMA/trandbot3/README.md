@@ -1,5 +1,5 @@
 15m
-  "tp_percent": 4,
+  "tp_percent": 3,
   "sl_percent": 2,
   "min_RSI": 30,
   "max_RSI": 70,
@@ -12,7 +12,7 @@
 
 
 30m
-  "tp_percent": 4,
+  "tp_percent": 3,
   "sl_percent": 2,
   "min_RSI": 30,
   "max_RSI": 70,

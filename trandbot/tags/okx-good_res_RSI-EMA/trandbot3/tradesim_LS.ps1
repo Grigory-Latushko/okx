@@ -17,6 +17,7 @@ $global:winCount = 0
 $global:totalClosed = 0
 $commissionRate = 0.0009  # 0.09%
 $evaluate_candle_period = $config.evaluate_candle_period
+$trendsize = $config.trendsize
 
 # Добавляем глобальные счетчики для винрейта по инструментам
 $global:instrumentTotal = @{}
@@ -168,29 +169,36 @@ function Get-Trend {
         [int]$trend_candles
     )
 
+    # Проверка, есть ли достаточно свечей
     if (-not $candles -or $candles.Count -lt $trend_candles) {
         return "NEUTRAL"
     }
 
+    # Рассчитываем ATR
     $atrArr = Calculate-ATR $candles $atrPeriod
+    if (-not $atrArr -or $atrArr.Count -eq 0) {
+        return "NEUTRAL"
+    }
     $lastAtr = $atrArr[-1]
 
+    # Берём закрытия последних свечей
     $lastCloses = $candles | Sort-Object Timestamp | Select-Object -Last $trend_candles | ForEach-Object { $_.Close }
-
-    if ($null -eq $lastCloses -or $lastCloses.Count -lt 2) {
+    if (-not $lastCloses -or $lastCloses.Count -lt 2) {
         return "NEUTRAL"
     }
 
+    # Рассчитываем дельту
     $delta = $lastCloses[-1] - $lastCloses[0]
 
-    if ([math]::Abs($delta) -gt $lastAtr) {
-        if ($delta -gt 0) { return "UP" }
-        elseif ($delta -lt 0) { return "DOWN" }
+    # Определяем тренд с порогом 1 ATR
+    if ($delta -gt $lastAtr*$trendsize) {
+        return "UP"
+    } elseif ($delta -lt -$lastAtr*$trendsize) {
+        return "DOWN"
+    } else {
+        return "NEUTRAL"
     }
-
-    return "NEUTRAL"
 }
-
 
 # === TRADE LOGIC ===
 $commissionRate = 0.0009  # 0.09%
@@ -373,8 +381,8 @@ function Run-Bot {
             # $trend = Get-Trend -candles $candles -atrPeriod 14 -trend_candles $trend_candles
             # $longSignal  = ($rsiPrev -lt $config.min_RSI) -and ($rsiCurr -ge $config.min_RSI) -and ($price -gt $lastEMA21) -and ($trend -eq "UP")
             # $shortSignal = ($rsiPrev -gt $config.max_RSI) -and ($rsiCurr -le $config.max_RSI) -and ($price -lt $lastEMA21) -and ($trend -eq "DOWN")
-            $longSignal  = ($rsiPrev -lt $config.min_RSI) -and ($rsiCurr -ge $config.min_RSI) -and ($price -gt $lastEMA21)
-            $shortSignal = ($rsiPrev -gt $config.max_RSI) -and ($rsiCurr -le $config.max_RSI) -and ($price -lt $lastEMA21)
+            $longSignal  = ($rsiCurr -ge 55) -and ($price -gt $lastEMA21) -and ($trend -eq "UP")
+            $shortSignal = ($rsiCurr -le 45) -and ($price -lt $lastEMA21) -and ($trend -eq "DOWN")
 
             if ($longSignal) {
                 LogConsole "$symbol → Открытие 📈 LONG: RSI пересек min_RSI ($($config.min_RSI)) снизу вверх: $rsiPrev → $rsiCurr" "SIGNAL"
