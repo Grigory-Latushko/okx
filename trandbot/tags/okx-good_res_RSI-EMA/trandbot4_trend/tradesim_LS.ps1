@@ -371,8 +371,8 @@ function Run-Bot {
 
             # Условия входа по пересечению RSI
             $trend = Get-Trend -candles $candles -atrPeriod 14 -trend_candles $trend_candles
-            $longSignal  = ($rsiPrev -lt $config.min_RSI) -and ($rsiCurr -ge $config.min_RSI) -and ($price -gt $lastEMA21) -and ($trend -eq "UP")
-            $shortSignal = ($rsiPrev -gt $config.max_RSI) -and ($rsiCurr -le $config.max_RSI) -and ($price -lt $lastEMA21) -and ($trend -eq "DOWN")
+            $longSignal  = ($price -gt $lastEMA21) -and ($rsiCurr -ge 55) -and ($trend -eq "UP")
+            $shortSignal = ($price -lt $lastEMA21) -and ($rsiCurr -le 45) -and ($trend -eq "DOWN")
 
             if ($longSignal) {
                 LogConsole "$symbol → Открытие 📈 LONG: RSI пересек min_RSI ($($config.min_RSI)) снизу вверх: $rsiPrev → $rsiCurr" "SIGNAL"
