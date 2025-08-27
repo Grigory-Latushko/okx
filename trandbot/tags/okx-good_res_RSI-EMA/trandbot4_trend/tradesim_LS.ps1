@@ -165,7 +165,8 @@ function Get-Trend {
     param (
         [array]$candles,
         [int]$atrPeriod,
-        [int]$trend_candles
+        [int]$trend_candles,
+        [double]$trendsize = 1.0
     )
 
     # Проверка, есть ли достаточно свечей
@@ -377,9 +378,10 @@ function Run-Bot {
             $slMultiplier = $config.sl_percent
             $trend_candles = $config.trend_candles
             $lastEMA21 = $ema21[-1]
+            $trendsize     = if ($config.trendsize) { $config.trendsize } else { 1.0 }
+            $trend = Get-Trend -candles $candles -atrPeriod 14 -trend_candles $trend_candles -trendsize $trendsize
 
             # Условия входа по пересечению RSI
-            $trend = Get-Trend -candles $candles -atrPeriod 14 -trend_candles $trend_candles
             $longSignal  = ($price -gt $lastEMA21) -and ($rsiCurr -ge 55) -and ($trend -eq "UP")
             $shortSignal = ($price -lt $lastEMA21) -and ($rsiCurr -le 45) -and ($trend -eq "DOWN")
 
