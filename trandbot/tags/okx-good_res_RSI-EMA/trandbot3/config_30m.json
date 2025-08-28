@@ -41,7 +41,7 @@
   "rerun_interval_s": 10,
   "candle_period": "30m",
   "evaluate_candle_period": "5m",
-  "trend_candles": 14,
+  "trend_candles": 7,
   "trendsize": 2
 
 }

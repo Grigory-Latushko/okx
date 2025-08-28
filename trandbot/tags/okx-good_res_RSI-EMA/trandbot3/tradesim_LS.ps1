@@ -358,12 +358,12 @@ function Run-Bot {
             $ema21 = Calculate-EMA $closes 21
 
             # Получаем массив RSI
-            $rsiArr = Calculate-RSI $closes 14
+            $rsiArr = Calculate-RSI $closes 50
             if ($rsiArr.Count -lt 2) { continue }
 
             # Предыдущее и текущее значение RSI
             $rsiPrev = $rsiArr[-2]
-            $rsiCurr = $rsiArr[-1]
+            $rsi50Curr = $rsiArr[-1]
 
             $atrArr = Calculate-ATR $candles 14
             if ($atrArr.Count -eq 0) { continue }
@@ -373,18 +373,18 @@ function Run-Bot {
             if ($null -eq $price) { continue }
 
             $size = [Math]::Round($config.position_size_usd / $price, 4)
-            $tpMultiplier = $config.tp_percent
-            $slMultiplier = $config.sl_percent
-            $trend_candles = $config.trend_candles
-            $lastEMA21 = $ema21[-1]
-            $trendsize     = if ($config.trendsize) { $config.trendsize } else { 1.0 }
-            $trend = Get-Trend -candles $candles -atrPeriod 14 -trend_candles $trend_candles -trendsize $trendsize
+            $tpMultiplier   = $config.tp_percent
+            $slMultiplier   = $config.sl_percent
+            $trend_candles  = $config.trend_candles
+            $lastEMA21  = $ema21[-1]
+            $trendsize  = if ($config.trendsize) { $config.trendsize } else { 1.0 }
+            $trend      = Get-Trend -candles $candles -atrPeriod 14 -trend_candles $trend_candles -trendsize $trendsize
 
             # Условия входа по пересечению RSI
             # $longSignal  = ($rsiPrev -lt $config.min_RSI) -and ($rsiCurr -ge $config.min_RSI) -and ($price -gt $lastEMA21) -and ($trend -eq "UP")
             # $shortSignal = ($rsiPrev -gt $config.max_RSI) -and ($rsiCurr -le $config.max_RSI) -and ($price -lt $lastEMA21) -and ($trend -eq "DOWN")
-            $longSignal  = ($rsiCurr -ge 55) -and ($price -gt $lastEMA21) -and ($trend -eq "UP")
-            $shortSignal = ($rsiCurr -le 45) -and ($price -lt $lastEMA21) -and ($trend -eq "DOWN")
+            $longSignal  = ($rsi50Curr -ge 55) -and ($price -gt $lastEMA21) -and ($trend -eq "UP")
+            $shortSignal = ($rsi50Curr -le 45) -and ($price -lt $lastEMA21) -and ($trend -eq "DOWN")
 
             if ($longSignal) {
                 LogConsole "$symbol → Открытие 📈 LONG: RSI пересек min_RSI ($($config.min_RSI)) снизу вверх: $rsiPrev → $rsiCurr" "SIGNAL"
@@ -399,6 +399,7 @@ function Run-Bot {
                 if (-not $longSignal -and -not $shortSignal) { $reasons += "нет пересечения RSI" }
                 # LogConsole "$symbol → Сделка не открыта: $($reasons -join ', ')" "NO-TRADE"
                 # Write-Host "rsiCurr=$rsiCurr; price=$price; EMA21=$lastEMA21 trend=$trend"
+                # Write-Output "rsi50Curr= $rsi50Curr, lastEMA21= $lastEMA21, trend= $trend"
             }
 
         } else {
