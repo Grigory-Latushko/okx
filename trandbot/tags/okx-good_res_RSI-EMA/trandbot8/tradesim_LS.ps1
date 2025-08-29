@@ -365,7 +365,7 @@ function Run-Bot {
             if ($rsiArr.Count -lt 2) { continue }
 
             # Предыдущее и текущее значение RSI
-            $rsiPrev = $rsiArr[-2]
+            # $rsiPrev = $rsiArr[-2]
             $rsiCurr = $rsiArr[-1]
 
             # Получаем массив RSI 50
@@ -373,7 +373,7 @@ function Run-Bot {
             if ($rsiArr.Count -lt 2) { continue }
 
             # Предыдущее и текущее значение RSI
-            $rsi50Prev = $rsi50Arr[-2]
+            # $rsi50Prev = $rsi50Arr[-2]
             $rsi50Curr = $rsi50Arr[-1]
 
             $atrArr = Calculate-ATR $candles 14
@@ -392,8 +392,8 @@ function Run-Bot {
             $trend = Get-Trend -candles $candles -atrPeriod 14 -trend_candles $trend_candles -trendsize $trendsize
 
             # Условия входа по пересечению RSI
-            $longSignal  = ($price -gt $lastEMA21) -and ($rsiCurr -ge 51) -and ($rsi50Curr -ge 51) -and ($trend -eq "UP")
-            $shortSignal = ($price -lt $lastEMA21) -and ($rsiCurr -le 49) -and ($rsi50Curr -le 49) -and ($trend -eq "DOWN")
+            $longSignal  = ($price -gt $lastEMA21) -and ($rsiCurr -ge $config.min_RSI) -and ($rsi50Curr -ge $config.min_RSI) -and ($trend -eq "UP")
+            $shortSignal = ($price -lt $lastEMA21) -and ($rsiCurr -le $config.max_RSI) -and ($rsi50Curr -le $config.max_RSI) -and ($trend -eq "DOWN")
 
             if ($longSignal) {
                 LogConsole "$symbol → Открытие 📈 LONG: lastEMA21 = $lastEMA21; rsi14Curr = $rsiCurr; rsi50Curr = $rsi50Curr; trend = $trend" "SIGNAL"
