@@ -17,7 +17,6 @@ $global:winCount = 0
 $global:totalClosed = 0
 $commissionRate = 0.0009  # 0.09%
 $evaluate_candle_period = $config.evaluate_candle_period
-$trendsize = $config.trendsize
 
 # Добавляем глобальные счетчики для винрейта по инструментам
 $global:instrumentTotal = @{}
@@ -162,6 +161,7 @@ function Calculate-RSI($prices, $period = 14) {
     return $rsi
 }
 
+
 function Get-Trend {
     param (
         [array]$candles,
@@ -200,6 +200,7 @@ function Get-Trend {
         return "NEUTRAL"
     }
 }
+
 
 # === TRADE LOGIC ===
 $commissionRate = 0.0009  # 0.09%
@@ -244,6 +245,7 @@ function Open-Position($symbol, $entryPrice, $size, $atr, $tpMultiplier, $slMult
     $global:positions[$symbol] = $position
     LogConsole "🚀 Открыта $side позиция ${symbol}: по $entryPrice (TP: $tp, SL: $sl, Size: $size), списано с баланса: $totalCost$" $side
 }
+
 function Close-Position($symbol, $exitPrice, $reason) {
     $pos = $global:positions[$symbol]
 
@@ -354,16 +356,24 @@ function Run-Bot {
 
             $closes = $candles | ForEach-Object { $_.Close }
 
-            # $ema9  = Calculate-EMA $closes 9
+            $ema9  = Calculate-EMA $closes 9
             $ema21 = Calculate-EMA $closes 21
 
             # Получаем массив RSI
-            $rsiArr = Calculate-RSI $closes 50
+            $rsiArr = Calculate-RSI $closes 14
             if ($rsiArr.Count -lt 2) { continue }
 
             # Предыдущее и текущее значение RSI
             $rsiPrev = $rsiArr[-2]
-            $rsi50Curr = $rsiArr[-1]
+            $rsiCurr = $rsiArr[-1]
+
+            # Получаем массив RSI 50
+            $rsi50Arr = Calculate-RSI $closes 50
+            if ($rsiArr.Count -lt 2) { continue }
+
+            # Предыдущее и текущее значение RSI
+            $rsi50Prev = $rsi50Arr[-2]
+            $rsi50Curr = $rsi50Arr[-1]
 
             $atrArr = Calculate-ATR $candles 14
             if ($atrArr.Count -eq 0) { continue }
@@ -373,25 +383,23 @@ function Run-Bot {
             if ($null -eq $price) { continue }
 
             $size = [Math]::Round($config.position_size_usd / $price, 4)
-            $tpMultiplier   = $config.tp_percent
-            $slMultiplier   = $config.sl_percent
-            $trend_candles  = $config.trend_candles
-            $lastEMA21  = $ema21[-1]
-            $trendsize  = if ($config.trendsize) { $config.trendsize } else { 1.0 }
-            $trend      = Get-Trend -candles $candles -atrPeriod 14 -trend_candles $trend_candles -trendsize $trendsize
+            $tpMultiplier = $config.tp_percent
+            $slMultiplier = $config.sl_percent
+            $trend_candles = $config.trend_candles
+            $lastEMA21 = $ema21[-1]
+            $trendsize     = if ($config.trendsize) { $config.trendsize } else { 1.0 }
+            $trend = Get-Trend -candles $candles -atrPeriod 14 -trend_candles $trend_candles -trendsize $trendsize
 
             # Условия входа по пересечению RSI
-            # $longSignal  = ($rsiPrev -lt $config.min_RSI) -and ($rsiCurr -ge $config.min_RSI) -and ($price -gt $lastEMA21) -and ($trend -eq "UP")
-            # $shortSignal = ($rsiPrev -gt $config.max_RSI) -and ($rsiCurr -le $config.max_RSI) -and ($price -lt $lastEMA21) -and ($trend -eq "DOWN")
-            $longSignal  = ($rsi50Curr -ge 55) -and ($price -gt $lastEMA21) -and ($trend -eq "UP")
-            $shortSignal = ($rsi50Curr -le 45) -and ($price -lt $lastEMA21) -and ($trend -eq "DOWN")
+            $longSignal  = ($price -gt $lastEMA21) -and ($rsiCurr -ge 55) -and ($rsi50Curr -ge 55) -and ($trend -eq "UP")
+            $shortSignal = ($price -lt $lastEMA21) -and ($rsiCurr -le 45) -and ($rsi50Curr -le 45) -and ($trend -eq "DOWN")
 
             if ($longSignal) {
-                LogConsole "$symbol → Открытие 📈 LONG: RSI пересек min_RSI ($($config.min_RSI)) снизу вверх: $rsiPrev → $rsiCurr" "SIGNAL"
+                LogConsole "$symbol → Открытие 📈 LONG: lastEMA21 = $lastEMA21; rsi14Curr = $rsiCurr; rsi50Curr = $rsi50Curr; trend = $trend" "SIGNAL"
                 Open-Position $symbol $price $size $atr $tpMultiplier $slMultiplier "LONG"
 
             } elseif ($shortSignal) {
-                LogConsole "$symbol → Открытие 📉 SHORT: RSI пересек max_RSI ($($config.max_RSI)) сверху вниз: $rsiPrev → $rsiCurr" "SIGNAL"
+                LogConsole "$symbol → Открытие 📉 SHORT: lastEMA21 = $lastEMA21; rsi14Curr = $rsiCurr; rsi50Curr = $rsi50Curr; trend = $trend" "SIGNAL"
                 Open-Position $symbol $price $size $atr $tpMultiplier $slMultiplier "SHORT"
 
             } else {
@@ -399,7 +407,6 @@ function Run-Bot {
                 if (-not $longSignal -and -not $shortSignal) { $reasons += "нет пересечения RSI" }
                 # LogConsole "$symbol → Сделка не открыта: $($reasons -join ', ')" "NO-TRADE"
                 # Write-Host "rsiCurr=$rsiCurr; price=$price; EMA21=$lastEMA21 trend=$trend"
-                # Write-Output "rsi50Curr= $rsi50Curr, lastEMA21= $lastEMA21, trend= $trend"
             }
 
         } else {

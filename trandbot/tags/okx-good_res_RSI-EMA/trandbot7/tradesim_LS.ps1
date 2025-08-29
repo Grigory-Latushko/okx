@@ -162,7 +162,6 @@ function Calculate-RSI($prices, $period = 14) {
 }
 
 
-
 function Get-Trend {
     param (
         [array]$candles,
