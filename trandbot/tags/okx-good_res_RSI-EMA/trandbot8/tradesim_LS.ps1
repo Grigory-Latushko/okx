@@ -64,16 +64,25 @@ function Get-Candles($symbol, $limit, $period) {
     try {
         $url = "https://www.okx.com/api/v5/market/candles?instId=$symbol&bar=$period&limit=$limit"
         $res = Invoke-RestMethod -Uri $url -Method Get
-        return $res.data | ForEach-Object {
+
+        if (-not $res.data) {
+            LogConsole "Пустые данные по свечам $symbol" "ERROR"
+            return @()
+        }
+
+        $candles = $res.data | ForEach-Object {
             [PSCustomObject]@{
-                Timestamp = [long]($_[0] / 1000)
-                Open = [double]$_[1]
-                High = [double]$_[2]
-                Low  = [double]$_[3]
-                Close = [double]$_[4]
-                Volume = [double]$_[5]
+                Timestamp = [long]($_[0]) / 1000   # UNIX timestamp в секундах
+                Open      = [double]$_[1]
+                High      = [double]$_[2]
+                Low       = [double]$_[3]
+                Close     = [double]$_[4]
+                Volume    = [double]$_[5]
             }
         }
+
+        # Разворачиваем в правильный порядок (от старых к новым)
+        return $candles | Sort-Object Timestamp
     } catch {
         LogConsole "Ошибка получения свечей для ${symbol}: $($_)" "ERROR"
         return @()
@@ -122,12 +131,18 @@ function Calculate-ATR($candles, $period = 14) {
     return $atr
 }
 
-function Calculate-RSI($prices, $period = 14) {
-    if ($prices.Count -le $period) { return @() }
+function Get-RSI {
+    param(
+        [double[]]$prices,
+        [int]$period = 14
+    )
+
+    if ($prices.Count -lt ($period + 1)) { return @() }
 
     $gains = @()
     $losses = @()
 
+    # считаем изменения
     for ($i = 1; $i -lt $prices.Count; $i++) {
         $change = $prices[$i] - $prices[$i - 1]
         if ($change -gt 0) {
@@ -139,23 +154,23 @@ function Calculate-RSI($prices, $period = 14) {
         }
     }
 
+    # начальные средние (простое среднее за первые N изменений)
     $avgGain = ($gains[0..($period-1)] | Measure-Object -Sum).Sum / $period
     $avgLoss = ($losses[0..($period-1)] | Measure-Object -Sum).Sum / $period
 
     $rsi = @()
-    $rsi += [Math]::Round(100 - (100 / (1 + ($avgGain / [Math]::Max($avgLoss, 0.0000001)))), 3)
 
+    # первое значение RSI
+    $rs = if ($avgLoss -eq 0) { [double]::PositiveInfinity } else { $avgGain / $avgLoss }
+    $rsi += [Math]::Round(100 - (100 / (1 + $rs)), 2)
+
+    # далее по формуле Уайлдера
     for ($i = $period; $i -lt $gains.Count; $i++) {
         $avgGain = (($avgGain * ($period - 1)) + $gains[$i]) / $period
         $avgLoss = (($avgLoss * ($period - 1)) + $losses[$i]) / $period
 
-        if ($avgLoss -eq 0) {
-            $rs = [double]::PositiveInfinity
-        } else {
-            $rs = $avgGain / $avgLoss
-        }
-
-        $rsi += [Math]::Round(100 - (100 / (1 + $rs)), 3)
+        $rs = if ($avgLoss -eq 0) { [double]::PositiveInfinity } else { $avgGain / $avgLoss }
+        $rsi += [Math]::Round(100 - (100 / (1 + $rs)), 2)
     }
 
     return $rsi
@@ -361,7 +376,7 @@ function Run-Bot {
             $ema21 = Calculate-EMA $closes 21
 
             # Получаем массив RSI
-            $rsiArr = Calculate-RSI $closes 14
+            $rsiArr = Get-RSI $closes 14
             if ($rsiArr.Count -lt 2) { continue }
 
             # Предыдущее и текущее значение RSI
@@ -369,8 +384,8 @@ function Run-Bot {
             $rsiCurr = $rsiArr[-1]
 
             # Получаем массив RSI 50
-            $rsi50Arr = Calculate-RSI $closes 50
-            if ($rsiArr.Count -lt 2) { continue }
+            $rsi50Arr = Get-RSI $closes 50
+            if ($rsi50Arr.Count -lt 2) { continue }
 
             # Предыдущее и текущее значение RSI
             # $rsi50Prev = $rsi50Arr[-2]
@@ -384,16 +399,18 @@ function Run-Bot {
             if ($null -eq $price) { continue }
 
             $size = [Math]::Round($config.position_size_usd / $price, 4)
-            $tpMultiplier = $config.tp_percent
-            $slMultiplier = $config.sl_percent
+            $tpMultiplier  = $config.tp_percent
+            $slMultiplier  = $config.sl_percent
             $trend_candles = $config.trend_candles
-            $lastEMA21 = $ema21[-1]
+            $lastEMA21     = $ema21[-1]
+            $atrPeriod     = $config.atrPeriod
+
             $trendsize     = if ($config.trendsize) { $config.trendsize } else { 1.0 }
-            $trend = Get-Trend -candles $candles -atrPeriod 14 -trend_candles $trend_candles -trendsize $trendsize
+            $trend         = Get-Trend -candles $candles -atrPeriod $atrPeriod -trend_candles $trend_candles -trendsize $trendsize
 
             # Условия входа по пересечению RSI
-            $longSignal  = ($price -gt $lastEMA21) -and ($rsiCurr -ge $config.min_RSI) -and ($rsi50Curr -ge $config.min_RSI) -and ($trend -eq "UP")
-            $shortSignal = ($price -lt $lastEMA21) -and ($rsiCurr -le $config.max_RSI) -and ($rsi50Curr -le $config.max_RSI) -and ($trend -eq "DOWN")
+            $longSignal  = ($price -gt $lastEMA21) -and ($rsiCurr -ge $config.max_RSI) -and ($rsi50Curr -ge $config.max_RSI) -and ($trend -eq "UP")
+            $shortSignal = ($price -lt $lastEMA21) -and ($rsiCurr -le $config.min_RSI) -and ($rsi50Curr -le $config.min_RSI) -and ($trend -eq "DOWN")
 
             if ($longSignal) {
                 LogConsole "$symbol → Открытие 📈 LONG: lastEMA21 = $lastEMA21; rsi14Curr = $rsiCurr; rsi50Curr = $rsi50Curr; trend = $trend" "SIGNAL"
@@ -407,7 +424,7 @@ function Run-Bot {
                 $reasons = @()
                 if (-not $longSignal -and -not $shortSignal) { $reasons += "нет пересечения RSI" }
                 # LogConsole "$symbol → Сделка не открыта: $($reasons -join ', ')" "NO-TRADE"
-                # Write-Host "rsiCurr=$rsiCurr; price=$price; EMA21=$lastEMA21 trend=$trend"
+                # Write-Host "symbol=$symbol; price=$price; EMA21=$lastEMA21; rsi14Curr=$rsiCurr; rsi50Curr=$rsi50Curr;  trend=$trend"
             }
 
         } else {
