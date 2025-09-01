@@ -394,6 +394,10 @@ function Run-Bot {
     }
 
     LogConsole "🔄 Новый цикл бота. Баланс: $($global:balance)$ | PnL: $($global:totalPnL) 💵 | Сделок: $global:totalClosed | WinRate: $winRate%" "INFO"
+    $timestamp = Format-Time
+    $logEntry = "🔄 ${timestamp} Баланс: $($global:balance)$ | PnL: $($global:totalPnL) 💵 | Сделок: $global:totalClosed | WinRate: $winRate%"
+    
+    Add-Content -Path $logFile -Value $logEntry
 
     foreach ($symbol in $config.instruments) {
         if (CanOpenNew $symbol) {
