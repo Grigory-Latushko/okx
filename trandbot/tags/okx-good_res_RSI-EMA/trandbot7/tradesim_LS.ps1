@@ -214,6 +214,41 @@ function Get-Trend {
     }
 }
 
+function Check-2ATR-Reversal {
+    param (
+        [array]$candles,
+        [double]$atr
+    )
+
+    if ($candles.Count -lt 3) { return $null }
+
+    $last2 = $candles | Sort-Object Timestamp | Select-Object -Last 2
+
+    $candle1 = $last2[0]  # предпоследняя
+    $candle2 = $last2[1]  # последняя
+
+    $body1 = [Math]::Abs($candle1.Close - $candle1.Open)
+    $body2 = [Math]::Abs($candle2.Close - $candle2.Open)
+
+    $isBullBig = ($candle1.Close -gt $candle1.Open) -and ($body1 -ge 1.5 * $atr)
+    $isBearBig = ($candle1.Close -lt $candle1.Open) -and ($body1 -ge 1.5 * $atr)
+
+    $isBullBig2 = ($candle2.Close -gt $candle2.Open) -and ($body2 -ge $body1)
+    $isBearBig2 = ($candle2.Close -lt $candle2.Open) -and ($body2 -ge $body1)
+
+    # Сценарий SHORT
+    if ($isBullBig -and $isBearBig2) {
+        return "SHORT"
+    }
+
+    # Сценарий LONG
+    if ($isBearBig -and $isBullBig2) {
+        return "LONG"
+    }
+
+    return $null
+}
+
 function Is-NewTradeAllowed($from, $to) {
     $utcNow = (Get-Date).ToUniversalTime().ToString("HH:mm")
 
@@ -229,32 +264,6 @@ function Is-NewTradeAllowed($from, $to) {
         )
     }
 }
-function Check-CandleSizeRisk {
-    param (
-        [array]$candles,
-        [double]$atr,
-        [ref]$longSignal,
-        [ref]$shortSignal,
-        [int]$lookback,
-        [double]$multiplier
-    )
-
-    if (-not $candles -or $candles.Count -lt $lookback) { return }
-
-    $recentCandles = $candles | Sort-Object Timestamp | Select-Object -Last $lookback
-
-    foreach ($c in $recentCandles) {
-        $body = [Math]::Abs($c.Close - $c.Open)
-        if ($body -gt ($multiplier * $atr)) {
-            LogConsole "🚫 Свеча слишком большая ($body > $multiplier * ATR=$atr), пропуск входа" "WARN"
-            $longSignal.Value = $false
-            $shortSignal.Value = $false
-            return
-        }
-        
-    }
-}
-
 
 # === TRADE LOGIC ===
 $commissionRate = 0.0009  # 0.09%
@@ -406,7 +415,10 @@ function Run-Bot {
     
     Add-Content -Path $logFile -Value $logEntry
 
-    foreach ($symbol in $config.instruments) {
+    $logEntry = "${timestamp} 🔄 Баланс: $($global:balance)$ | PnL: $($global:totalPnL) 💵 | Сделок: $global:totalClosed | WinRate: $winRate%"
+    Add-Content -Path $logFile -Value $logEntry
+
+   foreach ($symbol in $config.instruments) {
         if (CanOpenNew $symbol) {
 
             $candles = Get-Candles $symbol $config.candle_limit $config.candle_period
@@ -415,6 +427,7 @@ function Run-Bot {
             $closes = $candles | ForEach-Object { $_.Close }
 
             # $ema9  = Calculate-EMA $closes 9
+            $ema9  = Calculate-EMA $closes 9
             $ema21 = Calculate-EMA $closes 21
 
             # Получаем массив RSI
@@ -450,24 +463,19 @@ function Run-Bot {
             $trendsize     = if ($config.trendsize) { $config.trendsize } else { 1.0 }
             $trend         = Get-Trend -candles $candles -atrPeriod $atrPeriod -trend_candles $trend_candles -trendsize $trendsize
 
-            # Условия входа по пересечению RSI
-            $longSignal  = (($price -gt $lastEMA21) -and ($rsiCurr -ge $config.max_RSI) -and ($rsi50Curr -ge $config.max_RSI) -and ($trend -eq "UP"))
-            $shortSignal = (($price -lt $lastEMA21) -and ($rsiCurr -le $config.min_RSI) -and ($rsi50Curr -le $config.min_RSI) -and ($trend -eq "DOWN"))
+            $patternSignal = Check-2ATR-Reversal -candles $candles -atr $atr
 
-            Check-CandleSizeRisk `
-                -candles $candles `
-                -atr $atr `
-                -longSignal ([ref]$longSignal) `
-                -shortSignal ([ref]$shortSignal) `
-                -lookback $config.candleRiskLookback `
-                -multiplier $config.candleRiskMultiplier
+            # Условия входа по пересечению RSI
+            $longSignal  = (($price -gt $lastEMA21) -and ($rsiCurr -ge $config.max_RSI) -and ($rsi50Curr -ge $config.max_RSI) -and ($trend -eq "UP")) -or ($patternSignal -eq "LONG")
+            $shortSignal = (($price -lt $lastEMA21) -and ($rsiCurr -le $config.min_RSI) -and ($rsi50Curr -le $config.min_RSI) -and ($trend -eq "DOWN")) -or ($patternSignal -eq "SHORT")
+
 
             # Проверка времени только для новых сделок
             if (-not (Is-NewTradeAllowed $config.disable_trading_from $config.disable_trading_to)) {
                 LogConsole "⏸ Запрещено открывать новые сделки в этот период: $((Get-Date).ToUniversalTime().ToString("HH:mm")) UTC"
                 $longSignal = $false
                 $shortSignal = $false
-            }
+}
 
             if ($longSignal) {
                 LogConsole "$symbol → Открытие 📈 LONG: lastEMA21 = $lastEMA21; rsi14Curr = $rsiCurr; rsi50Curr = $rsi50Curr; trend = $trend" "SIGNAL"
