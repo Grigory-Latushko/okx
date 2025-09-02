@@ -40,9 +40,10 @@
   "position_size_usd": 10,
   "rerun_interval_s": 10,
   "candle_period": "1H",
-  "higher_tf": "4H",
   "evaluate_candle_period": "15m",
   "trend_candles": 6,
   "atrPeriod": 48,
-  "trendsize": 2
+  "trendsize": 1,
+  "disable_trading_from": "23:00",
+  "disable_trading_to": "04:00"
 }

@@ -249,6 +249,22 @@ function Check-2ATR-Reversal {
     return $null
 }
 
+function Is-NewTradeAllowed($from, $to) {
+    $utcNow = (Get-Date).ToUniversalTime().ToString("HH:mm")
+
+    if ([TimeSpan]::Parse($from) -lt [TimeSpan]::Parse($to)) {
+        # Обычный интервал (например 10:00–18:00)
+        return !([TimeSpan]::Parse($utcNow) -ge [TimeSpan]::Parse($from) -and [TimeSpan]::Parse($utcNow) -lt [TimeSpan]::Parse($to))
+    }
+    else {
+        # Интервал через полночь (например 23:00–04:00)
+        return !(
+            ([TimeSpan]::Parse($utcNow) -ge [TimeSpan]::Parse($from)) -or 
+            ([TimeSpan]::Parse($utcNow) -lt [TimeSpan]::Parse($to))
+        )
+    }
+}
+
 # === TRADE LOGIC ===
 $commissionRate = 0.0009  # 0.09%
 
@@ -392,13 +408,17 @@ function Run-Bot {
     } else {
         0
     }
-    $timestamp = Format-Time
+
     LogConsole "🔄 Новый цикл бота. Баланс: $($global:balance)$ | PnL: $($global:totalPnL) 💵 | Сделок: $global:totalClosed | WinRate: $winRate%" "INFO"
+    $timestamp = Format-Time
+    $logEntry = "🔄 ${timestamp} Баланс: $($global:balance)$ | PnL: $($global:totalPnL) 💵 | Сделок: $global:totalClosed | WinRate: $winRate%"
+    
+    Add-Content -Path $logFile -Value $logEntry
 
     $logEntry = "${timestamp} 🔄 Баланс: $($global:balance)$ | PnL: $($global:totalPnL) 💵 | Сделок: $global:totalClosed | WinRate: $winRate%"
     Add-Content -Path $logFile -Value $logEntry
 
-    foreach ($symbol in $config.instruments) {
+   foreach ($symbol in $config.instruments) {
         if (CanOpenNew $symbol) {
 
             $candles = Get-Candles $symbol $config.candle_limit $config.candle_period
@@ -407,6 +427,7 @@ function Run-Bot {
             $closes = $candles | ForEach-Object { $_.Close }
 
             # $ema9  = Calculate-EMA $closes 9
+            $ema9  = Calculate-EMA $closes 9
             $ema21 = Calculate-EMA $closes 21
 
             # Получаем массив RSI
@@ -448,6 +469,14 @@ function Run-Bot {
             $longSignal  = (($price -gt $lastEMA21) -and ($rsiCurr -ge $config.max_RSI) -and ($rsi50Curr -ge $config.max_RSI) -and ($trend -eq "UP")) -or ($patternSignal -eq "LONG")
             $shortSignal = (($price -lt $lastEMA21) -and ($rsiCurr -le $config.min_RSI) -and ($rsi50Curr -le $config.min_RSI) -and ($trend -eq "DOWN")) -or ($patternSignal -eq "SHORT")
 
+
+            # Проверка времени только для новых сделок
+            if (-not (Is-NewTradeAllowed $config.disable_trading_from $config.disable_trading_to)) {
+                LogConsole "⏸ Запрещено открывать новые сделки в этот период: $((Get-Date).ToUniversalTime().ToString("HH:mm")) UTC"
+                $longSignal = $false
+                $shortSignal = $false
+}
+
             if ($longSignal) {
                 LogConsole "$symbol → Открытие 📈 LONG: lastEMA21 = $lastEMA21; rsi14Curr = $rsiCurr; rsi50Curr = $rsi50Curr; trend = $trend" "SIGNAL"
                 Open-Position $symbol $price $size $atr $tpMultiplier $slMultiplier "LONG"
@@ -458,7 +487,7 @@ function Run-Bot {
 
             } else {
                 $reasons = @()
-                if (-not $longSignal -and -not $shortSignal) { $reasons += "нет пересечения RSI" }
+                if (-not $longSignal -and -not $shortSignal) { $reasons += "нет торговли" }
                 # LogConsole "$symbol → Сделка не открыта: $($reasons -join ', ')" "NO-TRADE"
                 # Write-Host "symbol=$symbol; price=$price; EMA21=$lastEMA21; rsi14Curr=$rsiCurr; rsi50Curr=$rsi50Curr;  trend=$trend"
             }

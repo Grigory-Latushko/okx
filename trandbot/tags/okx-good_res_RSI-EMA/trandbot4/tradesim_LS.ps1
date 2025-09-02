@@ -249,6 +249,26 @@ function Check-2ATR-Reversal {
     return $null
 }
 
+function Get-HigherTF-Trend($symbol, $higher_tf, $atrPeriod, $trend_candles, $trendsize) {
+    $candles = Get-Candles $symbol $trend_candles $higher_tf
+    if ($candles.Count -lt $trend_candles) { return "NEUTRAL" }
+    return Get-Trend -candles $candles -atrPeriod $atrPeriod -trend_candles $trend_candles -trendsize $trendsize
+}
+
+function Get-HigherTF-EMATrend($symbol, $higher_tf, $emaPeriod = 21) {
+    $candles = Get-Candles $symbol 200 $higher_tf
+    if ($candles.Count -lt $emaPeriod) { return "NEUTRAL" }
+
+    $closes = $candles | ForEach-Object { $_.Close }
+    $ema = Calculate-EMA $closes $emaPeriod
+    $lastPrice = $closes[-1]
+    $lastEMA = $ema[-1]
+
+    if ($lastPrice -gt $lastEMA) { return "UP" }
+    elseif ($lastPrice -lt $lastEMA) { return "DOWN" }
+    else { return "NEUTRAL" }
+}
+
 # === TRADE LOGIC ===
 $commissionRate = 0.0009  # 0.09%
 
@@ -407,7 +427,7 @@ function Run-Bot {
 
             $closes = $candles | ForEach-Object { $_.Close }
 
-            $ema9  = Calculate-EMA $closes 9
+            # $ema9  = Calculate-EMA $closes 9
             $ema21 = Calculate-EMA $closes 21
 
             # Получаем массив RSI
@@ -444,10 +464,12 @@ function Run-Bot {
             $trend         = Get-Trend -candles $candles -atrPeriod $atrPeriod -trend_candles $trend_candles -trendsize $trendsize
 
             $patternSignal = Check-2ATR-Reversal -candles $candles -atr $atr
+            $higherTrend_trend = Get-HigherTF-Trend $symbol $config.higher_tf $atrPeriod $trend_candles $trendsize
+            $higherTrend_EMA= Get-HigherTF-EMATrend $symbol $config.higher_tf 21
 
             # Условия входа по пересечению RSI
-            $longSignal  = (($price -gt $lastEMA21) -and ($rsiCurr -ge $config.max_RSI) -and ($rsi50Curr -ge $config.max_RSI) -and ($trend -eq "UP")) -or ($patternSignal -eq "LONG")
-            $shortSignal = (($price -lt $lastEMA21) -and ($rsiCurr -le $config.min_RSI) -and ($rsi50Curr -le $config.min_RSI) -and ($trend -eq "DOWN")) -or ($patternSignal -eq "SHORT")
+            $longSignal  = ((($price -gt $lastEMA21) -and ($rsiCurr -ge $config.max_RSI) -and ($rsi50Curr -ge $config.max_RSI) -and ($trend -eq "UP") -and ($higherTrend_trend -eq "UP") -and ($higherTrend_EMA -eq "UP")) -or ($patternSignal -eq "LONG"))
+            $shortSignal = ((($price -lt $lastEMA21) -and ($rsiCurr -le $config.min_RSI) -and ($rsi50Curr -le $config.min_RSI) -and ($trend -eq "DOWN") -and ($higherTrend_trend -eq "DOWN") -and ($higherTrend_EMA -eq "UP")) -or ($patternSignal -eq "SHORT"))
 
             if ($longSignal) {
                 LogConsole "$symbol → Открытие 📈 LONG: lastEMA21 = $lastEMA21; rsi14Curr = $rsiCurr; rsi50Curr = $rsi50Curr; trend = $trend" "SIGNAL"

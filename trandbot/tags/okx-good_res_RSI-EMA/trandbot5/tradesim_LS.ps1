@@ -33,20 +33,20 @@ function LogConsole($msg, $type = "INFO") {
     Write-Host $full
 }
 
-function LogTradeWithWinRate($pos, $reason, $winRate) {
-    # $openedAtStr = Format-Time-FromTS $pos.OpenedAt
-    # $closedAtStr = Format-Time-FromTS $pos.ClosedAt
-    $timestamp = Format-Time
+# function LogTradeWithWinRate($pos, $reason, $winRate) {
+#     # $openedAtStr = Format-Time-FromTS $pos.OpenedAt
+#     # $closedAtStr = Format-Time-FromTS $pos.ClosedAt
+#     $timestamp = Format-Time
 
-    $logEntry = "[${timestamp}][TRADE] Закрыта позиция $($pos.Symbol) $($pos.Side) PnL: $($pos.PnL) Причина: $reason Баланс: $($global:balance) WinRate инструмента: $winRate%`n" +
-                # "  Открытие:     $openedAtStr`n" +
-                # "  Закрытие:     $closedAtStr`n" +
-                # "  Цена входа:   $($pos.EntryPrice)`n" +
-                # "  Цена выхода:  $($pos.ExitPrice)`n" +
-                "🔄 Баланс: $($global:balance)$ | PnL: $($global:totalPnL) 💵 | Сделок: $global:totalClosed"
+#     $logEntry = "[${timestamp}][TRADE] Закрыта позиция $($pos.Symbol) $($pos.Side) PnL: $($pos.PnL) Причина: $reason Баланс: $($global:balance) WinRate инструмента: $winRate%`n" +
+#                 # "  Открытие:     $openedAtStr`n" +
+#                 # "  Закрытие:     $closedAtStr`n" +
+#                 # "  Цена входа:   $($pos.EntryPrice)`n" +
+#                 # "  Цена выхода:  $($pos.ExitPrice)`n" +
+#                 "🔄 Баланс: $($global:balance)$ | PnL: $($global:totalPnL) 💵 | Сделок: $global:totalClosed"
 
-    Add-Content -Path $logFile -Value $logEntry
-}
+#     Add-Content -Path $logFile -Value $logEntry
+# }
 
 # === DATA FETCH ===
 function Get-Last-Tick($symbol) {
@@ -249,6 +249,25 @@ function Check-2ATR-Reversal {
     return $null
 }
 
+<<<<<<<< HEAD:trandbot/tags/okx-good_res_RSI-EMA/trandbot7/tradesim_LS.ps1
+========
+function Is-NewTradeAllowed($from, $to) {
+    $utcNow = (Get-Date).ToUniversalTime().ToString("HH:mm")
+
+    if ([TimeSpan]::Parse($from) -lt [TimeSpan]::Parse($to)) {
+        # Обычный интервал (например 10:00–18:00)
+        return !([TimeSpan]::Parse($utcNow) -ge [TimeSpan]::Parse($from) -and [TimeSpan]::Parse($utcNow) -lt [TimeSpan]::Parse($to))
+    }
+    else {
+        # Интервал через полночь (например 23:00–04:00)
+        return !(
+            ([TimeSpan]::Parse($utcNow) -ge [TimeSpan]::Parse($from)) -or 
+            ([TimeSpan]::Parse($utcNow) -lt [TimeSpan]::Parse($to))
+        )
+    }
+}
+
+>>>>>>>> ba85656d766812d42bcfe64e78a097aaa2fb2b18:trandbot/tags/okx-good_res_RSI-EMA/trandbot5/tradesim_LS.ps1
 # === TRADE LOGIC ===
 $commissionRate = 0.0009  # 0.09%
 
@@ -392,13 +411,23 @@ function Run-Bot {
     } else {
         0
     }
+<<<<<<<< HEAD:trandbot/tags/okx-good_res_RSI-EMA/trandbot7/tradesim_LS.ps1
+    $timestamp = Format-Time
+========
 
+>>>>>>>> ba85656d766812d42bcfe64e78a097aaa2fb2b18:trandbot/tags/okx-good_res_RSI-EMA/trandbot5/tradesim_LS.ps1
     LogConsole "🔄 Новый цикл бота. Баланс: $($global:balance)$ | PnL: $($global:totalPnL) 💵 | Сделок: $global:totalClosed | WinRate: $winRate%" "INFO"
     $timestamp = Format-Time
     $logEntry = "🔄 ${timestamp} Баланс: $($global:balance)$ | PnL: $($global:totalPnL) 💵 | Сделок: $global:totalClosed | WinRate: $winRate%"
     
     Add-Content -Path $logFile -Value $logEntry
 
+<<<<<<<< HEAD:trandbot/tags/okx-good_res_RSI-EMA/trandbot7/tradesim_LS.ps1
+    $logEntry = "${timestamp} 🔄 Баланс: $($global:balance)$ | PnL: $($global:totalPnL) 💵 | Сделок: $global:totalClosed | WinRate: $winRate%"
+    Add-Content -Path $logFile -Value $logEntry
+
+========
+>>>>>>>> ba85656d766812d42bcfe64e78a097aaa2fb2b18:trandbot/tags/okx-good_res_RSI-EMA/trandbot5/tradesim_LS.ps1
     foreach ($symbol in $config.instruments) {
         if (CanOpenNew $symbol) {
 
@@ -407,7 +436,11 @@ function Run-Bot {
 
             $closes = $candles | ForEach-Object { $_.Close }
 
+<<<<<<<< HEAD:trandbot/tags/okx-good_res_RSI-EMA/trandbot7/tradesim_LS.ps1
+            # $ema9  = Calculate-EMA $closes 9
+========
             $ema9  = Calculate-EMA $closes 9
+>>>>>>>> ba85656d766812d42bcfe64e78a097aaa2fb2b18:trandbot/tags/okx-good_res_RSI-EMA/trandbot5/tradesim_LS.ps1
             $ema21 = Calculate-EMA $closes 21
 
             # Получаем массив RSI
@@ -449,6 +482,7 @@ function Run-Bot {
             $longSignal  = (($price -gt $lastEMA21) -and ($rsiCurr -ge $config.max_RSI) -and ($rsi50Curr -ge $config.max_RSI) -and ($trend -eq "UP")) -or ($patternSignal -eq "LONG")
             $shortSignal = (($price -lt $lastEMA21) -and ($rsiCurr -le $config.min_RSI) -and ($rsi50Curr -le $config.min_RSI) -and ($trend -eq "DOWN")) -or ($patternSignal -eq "SHORT")
 
+<<<<<<<< HEAD:trandbot/tags/okx-good_res_RSI-EMA/trandbot7/tradesim_LS.ps1
             if ($longSignal) {
                 LogConsole "$symbol → Открытие 📈 LONG: lastEMA21 = $lastEMA21; rsi14Curr = $rsiCurr; rsi50Curr = $rsi50Curr; trend = $trend" "SIGNAL"
                 Open-Position $symbol $price $size $atr $tpMultiplier $slMultiplier "LONG"
@@ -460,6 +494,26 @@ function Run-Bot {
             } else {
                 $reasons = @()
                 if (-not $longSignal -and -not $shortSignal) { $reasons += "нет пересечения RSI" }
+========
+            # Проверка времени только для новых сделок
+            if (-not (Is-NewTradeAllowed $config.disable_trading_from $config.disable_trading_to)) {
+                LogConsole "⏸ Запрещено открывать новые сделки в этот период: $((Get-Date).ToUniversalTime().ToString("HH:mm")) UTC"
+                $longSignal = $false
+                $shortSignal = $false
+}
+
+            if ($longSignal) {
+                LogConsole "$symbol → Открытие 📈 LONG: lastEMA21 = $lastEMA21; rsi14Curr = $rsiCurr; rsi50Curr = $rsi50Curr; trend = $trend" "SIGNAL"
+                Open-Position $symbol $price $size $atr $tpMultiplier $slMultiplier "LONG"
+
+            } elseif ($shortSignal) {
+                LogConsole "$symbol → Открытие 📉 SHORT: lastEMA21 = $lastEMA21; rsi14Curr = $rsiCurr; rsi50Curr = $rsi50Curr; trend = $trend" "SIGNAL"
+                Open-Position $symbol $price $size $atr $tpMultiplier $slMultiplier "SHORT"
+
+            } else {
+                $reasons = @()
+                if (-not $longSignal -and -not $shortSignal) { $reasons += "нет торговли" }
+>>>>>>>> ba85656d766812d42bcfe64e78a097aaa2fb2b18:trandbot/tags/okx-good_res_RSI-EMA/trandbot5/tradesim_LS.ps1
                 # LogConsole "$symbol → Сделка не открыта: $($reasons -join ', ')" "NO-TRADE"
                 # Write-Host "symbol=$symbol; price=$price; EMA21=$lastEMA21; rsi14Curr=$rsiCurr; rsi50Curr=$rsi50Curr;  trend=$trend"
             }
