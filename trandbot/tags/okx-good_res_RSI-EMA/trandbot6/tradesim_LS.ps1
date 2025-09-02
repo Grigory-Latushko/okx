@@ -461,8 +461,8 @@ function Run-Bot {
             if ($null -eq $price) { continue }
 
             $size = [Math]::Round($config.position_size_usd / $price, 4)
-            $tpMultiplier  = $config.tp_percent
-            $slMultiplier  = $config.sl_percent
+            $tpMultiplier  = $config.tp_ATR
+            $slMultiplier  = $config.sl_ATR
             $trend_candles = $config.trend_candles
             $lastEMA21     = $ema21[-1]
             $atrPeriod     = $config.atrPeriod
