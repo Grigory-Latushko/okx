@@ -31,12 +31,17 @@
   "WAXP-USDT-SWAP","WCT-USDT-SWAP","WIF-USDT-SWAP","WLD-USDT-SWAP","WOO-USDT-SWAP","XAUT-USDT-SWAP","XLM-USDT-SWAP","XTZ-USDT-SWAP","YFI-USDT-SWAP","YGG-USDT-SWAP","ZENT-USDT-SWAP",
   "ZEREBRO-USDT-SWAP","ZETA-USDT-SWAP","ZIL-USDT-SWAP","ZK-USDT-SWAP","ZRO-USDT-SWAP","ZRX-USDT-SWAP","BTC-USDC-SWAP","ETH-USDC-SWAP"
 ],
-  "tp_percent": 3.5,
-  "sl_percent": 1.3,
+  "tp_percent": 3,
+  "sl_percent": 2,
+  "min_RSI": 48,
+  "max_RSI": 52,
   "max_balance": 1000,
-  "candle_limit": 14,
+  "candle_limit": 120,
   "position_size_usd": 10,
   "rerun_interval_s": 10,
-  "candle_period": "5m",
-  "evaluate_candle_period": "1m"
+  "candle_period": "4H",
+  "evaluate_candle_period": "15m",
+  "trend_candles": 6,
+  "atrPeriod": 6,
+  "trendsize": 1
 }

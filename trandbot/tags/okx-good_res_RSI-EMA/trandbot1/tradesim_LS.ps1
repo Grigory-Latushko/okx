@@ -33,20 +33,20 @@ function LogConsole($msg, $type = "INFO") {
     Write-Host $full
 }
 
-function LogTradeWithWinRate($pos, $reason, $winRate) {
-    # $openedAtStr = Format-Time-FromTS $pos.OpenedAt
-    # $closedAtStr = Format-Time-FromTS $pos.ClosedAt
-    $timestamp = Format-Time
+# function LogTradeWithWinRate($pos, $reason, $winRate) {
+#     # $openedAtStr = Format-Time-FromTS $pos.OpenedAt
+#     # $closedAtStr = Format-Time-FromTS $pos.ClosedAt
+#     $timestamp = Format-Time
 
-    $logEntry = "[${timestamp}][TRADE] Закрыта позиция $($pos.Symbol) $($pos.Side) PnL: $($pos.PnL) Причина: $reason Баланс: $($global:balance) WinRate инструмента: $winRate%`n" +
-                # "  Открытие:     $openedAtStr`n" +
-                # "  Закрытие:     $closedAtStr`n" +
-                # "  Цена входа:   $($pos.EntryPrice)`n" +
-                # "  Цена выхода:  $($pos.ExitPrice)`n" +
-                "🔄 Баланс: $($global:balance)$ | PnL: $($global:totalPnL) 💵 | Сделок: $global:totalClosed"
+#     $logEntry = "[${timestamp}][TRADE] Закрыта позиция $($pos.Symbol) $($pos.Side) PnL: $($pos.PnL) Причина: $reason Баланс: $($global:balance) WinRate инструмента: $winRate%`n" +
+#                 # "  Открытие:     $openedAtStr`n" +
+#                 # "  Закрытие:     $closedAtStr`n" +
+#                 # "  Цена входа:   $($pos.EntryPrice)`n" +
+#                 # "  Цена выхода:  $($pos.ExitPrice)`n" +
+#                 "🔄 Баланс: $($global:balance)$ | PnL: $($global:totalPnL) 💵 | Сделок: $global:totalClosed"
 
-    Add-Content -Path $logFile -Value $logEntry
-}
+#     Add-Content -Path $logFile -Value $logEntry
+# }
 
 # === DATA FETCH ===
 function Get-Last-Tick($symbol) {
@@ -337,7 +337,7 @@ function Close-Position($symbol, $exitPrice, $reason) {
     }
 
     LogConsole "✅ Закрыта позиция ${symbol} ($($pos.Side)): по $exitPrice | PnL: $pnlRounded | Причина: $reason | Баланс: $($global:balance) | Сделок: $global:totalClosed | WinRate инструмента: $instrumentWinRate%" "CLOSE"
-    LogTradeWithWinRate $pos $reason $instrumentWinRate
+    # LogTradeWithWinRate $pos $reason $instrumentWinRate
 
     $global:positions.Remove($symbol)
 }
@@ -394,6 +394,9 @@ function Run-Bot {
     }
 
     LogConsole "🔄 Новый цикл бота. Баланс: $($global:balance)$ | PnL: $($global:totalPnL) 💵 | Сделок: $global:totalClosed | WinRate: $winRate%" "INFO"
+
+    $logEntry = "🔄 Новый цикл бота. Баланс: $($global:balance)$ | PnL: $($global:totalPnL) 💵 | Сделок: $global:totalClosed | WinRate: $winRate%"
+    Add-Content -Path $logFile -Value $logEntry
 
     foreach ($symbol in $config.instruments) {
         if (CanOpenNew $symbol) {

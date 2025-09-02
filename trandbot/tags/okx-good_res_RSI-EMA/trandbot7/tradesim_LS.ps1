@@ -33,20 +33,20 @@ function LogConsole($msg, $type = "INFO") {
     Write-Host $full
 }
 
-function LogTradeWithWinRate($pos, $reason, $winRate) {
-    # $openedAtStr = Format-Time-FromTS $pos.OpenedAt
-    # $closedAtStr = Format-Time-FromTS $pos.ClosedAt
-    $timestamp = Format-Time
+# function LogTradeWithWinRate($pos, $reason, $winRate) {
+#     # $openedAtStr = Format-Time-FromTS $pos.OpenedAt
+#     # $closedAtStr = Format-Time-FromTS $pos.ClosedAt
+#     $timestamp = Format-Time
 
-    $logEntry = "[${timestamp}][TRADE] Закрыта позиция $($pos.Symbol) $($pos.Side) PnL: $($pos.PnL) Причина: $reason Баланс: $($global:balance) WinRate инструмента: $winRate%`n" +
-                # "  Открытие:     $openedAtStr`n" +
-                # "  Закрытие:     $closedAtStr`n" +
-                # "  Цена входа:   $($pos.EntryPrice)`n" +
-                # "  Цена выхода:  $($pos.ExitPrice)`n" +
-                "🔄 Баланс: $($global:balance)$ | PnL: $($global:totalPnL) 💵 | Сделок: $global:totalClosed"
+#     $logEntry = "[${timestamp}][TRADE] Закрыта позиция $($pos.Symbol) $($pos.Side) PnL: $($pos.PnL) Причина: $reason Баланс: $($global:balance) WinRate инструмента: $winRate%`n" +
+#                 # "  Открытие:     $openedAtStr`n" +
+#                 # "  Закрытие:     $closedAtStr`n" +
+#                 # "  Цена входа:   $($pos.EntryPrice)`n" +
+#                 # "  Цена выхода:  $($pos.ExitPrice)`n" +
+#                 "🔄 Баланс: $($global:balance)$ | PnL: $($global:totalPnL) 💵 | Сделок: $global:totalClosed"
 
-    Add-Content -Path $logFile -Value $logEntry
-}
+#     Add-Content -Path $logFile -Value $logEntry
+# }
 
 # === DATA FETCH ===
 function Get-Last-Tick($symbol) {
@@ -89,6 +89,19 @@ function Get-Candles($symbol, $limit, $period) {
     }
 }
 
+# === INDICATORS ===
+function Calculate-EMA($prices, $period) {
+    $k = 2 / ($period + 1)
+    $ema = @()
+    $ema += $prices[0]
+
+    for ($i = 1; $i -lt $prices.Count; $i++) {
+        $value = $prices[$i] * $k + $ema[$i-1] * (1 - $k)
+        $ema += $value
+    }
+    return $ema
+}
+
 function Calculate-ATR($candles, $period = 14) {
     $trs = @()
     for ($i = 1; $i -lt $candles.Count; $i++) {
@@ -117,6 +130,89 @@ function Calculate-ATR($candles, $period = 14) {
     }
     return $atr
 }
+function Get-RSI {
+    param(
+        [double[]]$prices,
+        [int]$period = 14
+    )
+
+    if ($prices.Count -lt ($period + 1)) { return @() }
+
+    $gains = @()
+    $losses = @()
+
+    # считаем изменения
+    for ($i = 1; $i -lt $prices.Count; $i++) {
+        $change = $prices[$i] - $prices[$i - 1]
+        if ($change -gt 0) {
+            $gains += $change
+            $losses += 0
+        } else {
+            $gains += 0
+            $losses += [Math]::Abs($change)
+        }
+    }
+
+    # начальные средние (простое среднее за первые N изменений)
+    $avgGain = ($gains[0..($period-1)] | Measure-Object -Sum).Sum / $period
+    $avgLoss = ($losses[0..($period-1)] | Measure-Object -Sum).Sum / $period
+
+    $rsi = @()
+
+    # первое значение RSI
+    $rs = if ($avgLoss -eq 0) { [double]::PositiveInfinity } else { $avgGain / $avgLoss }
+    $rsi += [Math]::Round(100 - (100 / (1 + $rs)), 2)
+
+    # далее по формуле Уайлдера
+    for ($i = $period; $i -lt $gains.Count; $i++) {
+        $avgGain = (($avgGain * ($period - 1)) + $gains[$i]) / $period
+        $avgLoss = (($avgLoss * ($period - 1)) + $losses[$i]) / $period
+
+        $rs = if ($avgLoss -eq 0) { [double]::PositiveInfinity } else { $avgGain / $avgLoss }
+        $rsi += [Math]::Round(100 - (100 / (1 + $rs)), 2)
+    }
+
+    return $rsi
+}
+
+function Get-Trend {
+    param (
+        [array]$candles,
+        [int]$atrPeriod,
+        [int]$trend_candles,
+        [double]$trendsize = 1.0
+    )
+
+    # Проверка, есть ли достаточно свечей
+    if (-not $candles -or $candles.Count -lt $trend_candles) {
+        return "NEUTRAL"
+    }
+
+    # Рассчитываем ATR
+    $atrArr = Calculate-ATR $candles $atrPeriod
+    if (-not $atrArr -or $atrArr.Count -eq 0) {
+        return "NEUTRAL"
+    }
+    $lastAtr = $atrArr[-1]
+
+    # Берём закрытия последних свечей
+    $lastCloses = $candles | Sort-Object Timestamp | Select-Object -Last $trend_candles | ForEach-Object { $_.Close }
+    if (-not $lastCloses -or $lastCloses.Count -lt 2) {
+        return "NEUTRAL"
+    }
+
+    # Рассчитываем дельту
+    $delta = $lastCloses[-1] - $lastCloses[0]
+
+    # Определяем тренд с порогом 1 ATR
+    if ($delta -gt $lastAtr*$trendsize) {
+        return "UP"
+    } elseif ($delta -lt -$lastAtr*$trendsize) {
+        return "DOWN"
+    } else {
+        return "NEUTRAL"
+    }
+}
 
 function Check-2ATR-Reversal {
     param (
@@ -137,8 +233,8 @@ function Check-2ATR-Reversal {
     $isBullBig = ($candle1.Close -gt $candle1.Open) -and ($body1 -ge 1.5 * $atr)
     $isBearBig = ($candle1.Close -lt $candle1.Open) -and ($body1 -ge 1.5 * $atr)
 
-    $isBullBig2 = ($candle2.Close -gt $candle2.Open) -and ($body2 -ge 0.8 * $body1)
-    $isBearBig2 = ($candle2.Close -lt $candle2.Open) -and ($body2 -ge 0.8 * $body1)
+    $isBullBig2 = ($candle2.Close -gt $candle2.Open) -and ($body2 -ge $body1)
+    $isBearBig2 = ($candle2.Close -lt $candle2.Open) -and ($body2 -ge $body1)
 
     # Сценарий SHORT
     if ($isBullBig -and $isBearBig2) {
@@ -152,7 +248,6 @@ function Check-2ATR-Reversal {
 
     return $null
 }
-
 
 # === TRADE LOGIC ===
 $commissionRate = 0.0009  # 0.09%
@@ -242,7 +337,7 @@ function Close-Position($symbol, $exitPrice, $reason) {
     }
 
     LogConsole "✅ Закрыта позиция ${symbol} ($($pos.Side)): по $exitPrice | PnL: $pnlRounded | Причина: $reason | Баланс: $($global:balance) | Сделок: $global:totalClosed | WinRate инструмента: $instrumentWinRate%" "CLOSE"
-    LogTradeWithWinRate $pos $reason $instrumentWinRate
+    # LogTradeWithWinRate $pos $reason $instrumentWinRate
 
     $global:positions.Remove($symbol)
 }
@@ -292,78 +387,80 @@ function CanOpenNew($symbol) {
 }
 
 function Run-Bot {
-
-    $candle_limit = $config.candle_limit
-    $candle_period = $config.candle_period
-
-    # LogConsole "Debug 0"
-
     $winRate = if ($global:totalClosed -gt 0) {
         [Math]::Round(($global:winCount / $global:totalClosed) * 100, 2)
     } else {
         0
     }
+    $timestamp = Format-Time
     LogConsole "🔄 Новый цикл бота. Баланс: $($global:balance)$ | PnL: $($global:totalPnL) 💵 | Сделок: $global:totalClosed | WinRate: $winRate%" "INFO"
 
-    foreach ($symbol in $config.instruments) {
+    $logEntry = "${timestamp} 🔄 Баланс: $($global:balance)$ | PnL: $($global:totalPnL) 💵 | Сделок: $global:totalClosed | WinRate: $winRate%"
+    Add-Content -Path $logFile -Value $logEntry
 
+    foreach ($symbol in $config.instruments) {
         if (CanOpenNew $symbol) {
 
-            # LogConsole "symbol $symbol; candle_limit $candle_limit candle_period $candle_period"
-
-            $candles = Get-Candles $symbol $candle_limit $candle_period
-
-            # LogConsole "candles count = $($candles.Count)" "DEBUG"
-            # LogConsole "first candle = $(($candles[0] | ConvertTo-Json -Compress))" "DEBUG"
-            # LogConsole "last candle  = $(($candles[-1] | ConvertTo-Json -Compress))" "DEBUG"
-
+            $candles = Get-Candles $symbol $config.candle_limit $config.candle_period
             if ($candles.Count -lt 50) { continue }
 
-            # LogConsole "DEBUG 1"
+            $closes = $candles | ForEach-Object { $_.Close }
 
-            # $closes = $candles | ForEach-Object { $_.Close }
+            # $ema9  = Calculate-EMA $closes 9
+            $ema21 = Calculate-EMA $closes 21
+
+            # Получаем массив RSI
+            $rsiArr = Get-RSI $closes 14
+            if ($rsiArr.Count -lt 2) { continue }
+
+            # Предыдущее и текущее значение RSI
+            # $rsiPrev = $rsiArr[-2]
+            $rsiCurr = $rsiArr[-1]
+
+            # Получаем массив RSI 50
+            $rsi50Arr = Get-RSI $closes 50
+            if ($rsi50Arr.Count -lt 2) { continue }
+
+            # Предыдущее и текущее значение RSI
+            # $rsi50Prev = $rsi50Arr[-2]
+            $rsi50Curr = $rsi50Arr[-1]
 
             $atrArr = Calculate-ATR $candles 14
             if ($atrArr.Count -eq 0) { continue }
             $atr = $atrArr[-1]
 
-            # LogConsole  "DEBUG 2"
-
             $price = Get-Last-Tick $symbol
             if ($null -eq $price) { continue }
 
-            # LogConsole "DEBUG 3"
-
             $size = [Math]::Round($config.position_size_usd / $price, 4)
-            $tpMultiplier = $config.tp_percent
-            $slMultiplier = $config.sl_percent
+            $tpMultiplier  = $config.tp_percent
+            $slMultiplier  = $config.sl_percent
+            $trend_candles = $config.trend_candles
+            $lastEMA21     = $ema21[-1]
+            $atrPeriod     = $config.atrPeriod
+
+            $trendsize     = if ($config.trendsize) { $config.trendsize } else { 1.0 }
+            $trend         = Get-Trend -candles $candles -atrPeriod $atrPeriod -trend_candles $trend_candles -trendsize $trendsize
 
             $patternSignal = Check-2ATR-Reversal -candles $candles -atr $atr
 
-            # LogConsole  "DEBUG 4"
+            # Условия входа по пересечению RSI
+            $longSignal  = (($price -gt $lastEMA21) -and ($rsiCurr -ge $config.max_RSI) -and ($rsi50Curr -ge $config.max_RSI) -and ($trend -eq "UP")) -or ($patternSignal -eq "LONG")
+            $shortSignal = (($price -lt $lastEMA21) -and ($rsiCurr -le $config.min_RSI) -and ($rsi50Curr -le $config.min_RSI) -and ($trend -eq "DOWN")) -or ($patternSignal -eq "SHORT")
 
-            if ($null -ne $patternSignal -and (CanOpenNew $symbol)) {
-                $size = [Math]::Round($config.position_size_usd / $price, 4)
+            if ($longSignal) {
+                LogConsole "$symbol → Открытие 📈 LONG: lastEMA21 = $lastEMA21; rsi14Curr = $rsiCurr; rsi50Curr = $rsi50Curr; trend = $trend" "SIGNAL"
+                Open-Position $symbol $price $size $atr $tpMultiplier $slMultiplier "LONG"
 
-                # Write-Output "DEBUG 5"
+            } elseif ($shortSignal) {
+                LogConsole "$symbol → Открытие 📉 SHORT: lastEMA21 = $lastEMA21; rsi14Curr = $rsiCurr; rsi50Curr = $rsi50Curr; trend = $trend" "SIGNAL"
+                Open-Position $symbol $price $size $atr $tpMultiplier $slMultiplier "SHORT"
 
-                if ($patternSignal -eq "SHORT") {
-                    LogConsole "$symbol → 📉 Паттерн 2ATR reversal: открытие SHORT" "SIGNAL"
-                    Open-Position $symbol $price $size $atr $tpMultiplier  $slMultiplier "SHORT"
-                    
-                    # LogConsole  "DEBUG 6"
-                }
-                elseif ($patternSignal -eq "LONG") {
-                    LogConsole "$symbol → 📈 Паттерн 2ATR reversal: открытие LONG" "SIGNAL"
-                    Open-Position $symbol $price $size $atr $tpMultiplier $slMultiplier "LONG"
-
-                    # LogConsole  "DEBUG 7"
-                }
-                else {
-
-                    LogConsole  "DEBUG 8"
-                    LogConsole "symbol= $symbol; patternSignal= $patternSignal; isBullBig= $isBullBig; isBearBig= $isBearBig; isBullBig2= $isBullBig2; isBearBig2= $isBearBig2"
-                }
+            } else {
+                $reasons = @()
+                if (-not $longSignal -and -not $shortSignal) { $reasons += "нет пересечения RSI" }
+                # LogConsole "$symbol → Сделка не открыта: $($reasons -join ', ')" "NO-TRADE"
+                # Write-Host "symbol=$symbol; price=$price; EMA21=$lastEMA21; rsi14Curr=$rsiCurr; rsi50Curr=$rsi50Curr;  trend=$trend"
             }
 
         } else {
