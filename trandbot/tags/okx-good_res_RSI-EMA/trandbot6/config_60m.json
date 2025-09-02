@@ -60,6 +60,7 @@
   "rerun_interval_s": 10,
   "candle_period": "1H",
   "evaluate_candle_period": "15m",
+  "higher_tf": "4H",
   "trend_candles": 4,
   "atrPeriod": 48,
   "trendsize": 1,
