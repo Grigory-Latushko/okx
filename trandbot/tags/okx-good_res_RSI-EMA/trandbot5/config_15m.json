@@ -44,6 +44,6 @@
   "trend_candles": 24,
   "atrPeriod": 48,
   "trendsize": 2,
-  "disable_trading_from": "23:00",
+  "disable_trading_from": "07:15",
   "disable_trading_to": "04:00"
 }
