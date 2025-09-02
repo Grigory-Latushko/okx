@@ -1,2 +1,1 @@
-Higher trend filter added
-Higher trend EMA filter added
+Higher trend filter added \ Higher trend EMA filter added

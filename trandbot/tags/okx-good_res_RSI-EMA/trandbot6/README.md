@@ -1,2 +1,3 @@
-Higher trend filter added
-Higher trend EMA filter added
+No trade 23-00 - 04-00
+Forbid open if current or 2 pervious candle > 3 ATR
+Higher trend filter added \ Higher trend EMA filter added

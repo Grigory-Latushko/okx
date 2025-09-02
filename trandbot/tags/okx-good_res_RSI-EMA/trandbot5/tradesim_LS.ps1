@@ -229,6 +229,7 @@ function Is-NewTradeAllowed($from, $to) {
         )
     }
 }
+
 function Check-CandleSizeRisk {
     param (
         [array]$candles,
