@@ -318,7 +318,7 @@ function Open-Position {
         $atr = [Math]::Max(0.01 * $entryPrice, 0.0001)  # запасной ATR (1% цены)
         LogConsole "⚠️ ATR некорректен — установлен запасной ATR = $atr" "WARN"
     }
-
+    
     # --- Расчет SL ---
     try {
         $sl = Get-StopLoss -candles $candles -trendCandles $trendCandles -direction $side
@@ -385,7 +385,6 @@ function Open-Position {
     $global:positions[$symbol] = $position
     LogConsole "🚀 Открыта $side позиция ${symbol}: по $entryPrice (TP: $tp, SL: $sl, Size: $size), списано с баланса: $totalCost$" $side
 }
-
 
 function Close-Position($symbol, $exitPrice, $reason) {
     $pos = $global:positions[$symbol]
@@ -562,7 +561,7 @@ function Run-Bot {
 
            if ($longSignal) {
                 LogConsole "$symbol → Открытие 📈 LONG: lastEMA21 = $lastEMA21; rsi14Curr = $rsiCurr; rsi50Curr = $rsi50Curr; trend = $trend" "SIGNAL"
-                    Open-Position -symbol $symbol -entryPrice $price -size $size -atr $atr -tpMultiplier $tpMultiplier -trendCandles $trend_candles -side "LONG" -candles $candles
+                Open-Position -symbol $symbol -entryPrice $price -size $size -atr $atr -tpMultiplier $tpMultiplier -trendCandles $trend_candles -side "LONG" -candles $candles
 
 
             } elseif ($shortSignal) {
