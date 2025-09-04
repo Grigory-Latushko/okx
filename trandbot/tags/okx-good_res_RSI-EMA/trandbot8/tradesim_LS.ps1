@@ -229,10 +229,10 @@ function Open-Position($symbol, $entryPrice, $size, $atr, $tpMultiplier, $trendC
         IsCounter = [bool]$isCounter
     }
 
-    if (-not $global:positions.ContainsKey($symbol)) { 
-        $global:positions[$symbol] = @() 
+    if (-not $global:positions.ContainsKey($symbol) -or $global:positions[$symbol] -eq $null) {
+    $global:positions[$symbol] = [System.Collections.ArrayList]@()
     }
-    $global:positions[$symbol] += $position
+    $global:positions[$symbol].Add($position) | Out-Null
 
     LogConsole "🚀 Открыта $side позиция $symbolDisplay $entryPrice (TP:$tp SL:$sl Size:$size) списано:$totalCost$" $side
 }
