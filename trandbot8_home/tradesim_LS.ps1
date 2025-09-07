@@ -150,8 +150,8 @@ function Get-Trend($candles, $atrPeriod, $trend_candles, $trendsize=1.0) {
     if ($delta -gt $lastAtr*$trendsize) { return "UP" } elseif ($delta -lt -$lastAtr*$trendsize) { return "DOWN" } else { return "NEUTRAL" }
 }
 
-function Get-StopLoss($candles,$trendCandles,$direction) {
-    $recentCandles = $candles | Sort-Object Timestamp | Select-Object -Last $trendCandles
+function Get-StopLoss($candles,$sl_candles,$direction) {
+    $recentCandles = $candles | Sort-Object Timestamp | Select-Object -Last $sl_candles
     switch ($direction.ToUpper()) {
         "LONG" { return [Math]::Round(($recentCandles | Measure-Object -Property Close -Minimum).Minimum,8) }
         "SHORT"{ return [Math]::Round(($recentCandles | Measure-Object -Property Close -Maximum).Maximum,8) }
@@ -172,6 +172,32 @@ function CanOpenNew($symbol, $side, [ref]$isCounter) {
     if ($oppositePos.Count -gt 0) { $isCounter.Value = $true }
 
     return $true
+}
+
+function Check-CandleSizeRisk {
+    param (
+        [array]$candles,
+        [double]$atr,
+        [ref]$longSignal,
+        [ref]$shortSignal,
+        [int]$lookback,
+        [double]$multiplier
+    )
+
+    if (-not $candles -or $candles.Count -lt $lookback) { return }
+
+    $recentCandles = $candles | Sort-Object Timestamp | Select-Object -Last $lookback
+
+    foreach ($c in $recentCandles) {
+        $body = [Math]::Abs($c.Close - $c.Open)
+        if ($body -gt ($multiplier * $atr)) {
+            LogConsole "🚫 Свеча слишком большая ($body > $multiplier * ATR=$atr), пропуск входа" "WARN"
+            $longSignal.Value = $false
+            $shortSignal.Value = $false
+            return
+        }
+        
+    }
 }
 
 function Open-Position($symbol, $entryPrice, $size, $atr, $tpMultiplier, $trendCandles, $side, $candles, [bool]$isCounter = $false) {
@@ -259,7 +285,9 @@ function Close-Position($symbol, $exitPrice, $reason, $side) {
 
     LogConsole "✅ Закрыта позиция $symbol ($($pos.Side)): по $exitPrice | PnL:$pnlRounded | Причина:$reason | Баланс:$($global:balance)" "CLOSE"
 
-    $global:positions[$symbol] = $posList | Where-Object { $_.OpenedAt -ne $pos.OpenedAt }
+    $remaining = $posList | Where-Object { $_.OpenedAt -ne $pos.OpenedAt }
+    $global:positions[$symbol] = [System.Collections.ArrayList]@($remaining)
+
 }
 
 function Evaluate-Position($symbol) {
@@ -296,10 +324,12 @@ function Evaluate-Position($symbol) {
 
 # === MAIN BOT LOOP ===
 function Run-Bot {
-    $winRate = if ($global:totalClosed -gt 0) { [Math]::Round(($global:winCount/$global:totalClosed)*100,2) } else { 0 }
+    $winRate   = if ($global:totalClosed -gt 0) { [Math]::Round(($global:winCount/$global:totalClosed)*100,2) } else { 0 }
     $timestamp = Format-Time
+    
     LogConsole "🔄 Новый цикл. Баланс:$($global:balance)$ | PnL:$($global:totalPnL) 💵 | Сделок:$global:totalClosed | WinRate:$winRate%" "INFO"
     $logEntry = "🔄 ${timestamp} Баланс: $($global:balance)$ | PnL: $($global:totalPnL) 💵 | Сделок: $global:totalClosed | WinRate: $winRate%"
+
     Add-Content -Path $logFile -Value $logEntry
 
     foreach ($symbol in $config.instruments) {
@@ -309,15 +339,21 @@ function Run-Bot {
         $candles = Get-Candles $symbol $config.candle_limit $config.candle_period
         if ($candles.Count -lt 50) { continue }
 
-        $closes = $candles | ForEach-Object { $_.Close }
-        $ema21 = Calculate-EMA $closes 21
-        $rsiArr = Get-RSI $closes 14
-        $rsi50Arr = Get-RSI $closes 50
-        if ($rsiArr.Count -lt 2 -or $rsi50Arr.Count -lt 2) { continue }
+        # Write-Output "Debug 1"
 
-        $rsiCurr = $rsiArr[-1]
-        $rsi50Curr = $rsi50Arr[-1]
-        $atrArr = Calculate-ATR $candles 14
+        $closes   = $candles | ForEach-Object { $_.Close }
+        $ema21    = Calculate-EMA $closes 21
+        $rsi6Arr  = Get-RSI $closes 6
+        $rsi14Arr = Get-RSI $closes 14
+        $rsi30Arr = Get-RSI $closes 30
+        if ($rsi6Arr.Count -lt 2 -or $rsi14Arr.Count -lt 2 -or $rsi30Arr.Count -lt 2) { continue }
+
+        # Write-Output "Debug 2"
+
+        $rsi6Curr  = $rsi6Arr[-1]
+        $rsi14Curr = $rsi14Arr[-1]
+        $rsi30Curr = $rsi30Arr[-1]
+        $atrArr    = Calculate-ATR $candles 14
         if ($atrArr.Count -eq 0) { continue }
 
         $atr = $atrArr[-1]
@@ -326,12 +362,23 @@ function Run-Bot {
 
         $size = [Math]::Round($config.position_size_usd/$price,4)
         $trend_candles = $config.trend_candles
-        $tpMultiplier = $config.tp_ATR
-        $trend = Get-Trend $candles $config.atrPeriod $trend_candles
-        $lastEMA21 = $ema21[-1]
+        $tpMultiplier  = $config.tp_ATR
+        $trend         = Get-Trend $candles $config.atrPeriod $trend_candles
+        $lastEMA21     = $ema21[-1]
 
-        $longSignal = ($price -gt $lastEMA21) -and ($rsiCurr -ge $config.max_RSI) -and ($rsi50Curr -ge $config.max_RSI) -and ($trend -eq "UP")
-        $shortSignal = ($price -lt $lastEMA21) -and ($rsiCurr -le $config.min_RSI) -and ($rsi50Curr -le $config.min_RSI) -and ($trend -eq "DOWN")
+        $longSignal  = ($price -gt $lastEMA21) -and ($rsi6Curr -ge $config.max_RSI) -and ($rsi14Curr -ge $config.max_RSI) -and ($rsi30Curr -ge $config.max_RSI) -and ($trend -eq "UP")
+        $shortSignal = ($price -lt $lastEMA21) -and ($rsi6Curr -le $config.min_RSI) -and ($rsi14Curr -le $config.min_RSI) -and ($rsi30Curr -le $config.min_RSI) -and ($trend -eq "DOWN")
+
+        # Write-Output "symbol = $symbol price = $price lastEMA21 = $lastEMA21 rsi6Curr = $rsi6Curr rsi14Curr = $rsi14Curr rsi30Curr = $rsi30Curr trend = $trend"
+
+        # Проверка больших свечей
+        Check-CandleSizeRisk `
+            -candles $candles `
+            -atr $atr `
+            -longSignal ([ref]$longSignal) `
+            -shortSignal ([ref]$shortSignal) `
+            -lookback $config.candleRiskLookback `
+            -multiplier $config.candleRiskMultiplier
 
         # --- Открытие LONG ---
         $isCounter = $false
