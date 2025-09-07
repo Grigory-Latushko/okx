@@ -366,8 +366,8 @@ function Run-Bot {
         $trend         = Get-Trend $candles $config.atrPeriod $trend_candles
         $lastEMA21     = $ema21[-1]
 
-        $longSignal  = ($price -gt $lastEMA21) -and ($rsi6Curr -ge $config.max_RSI) -and ($rsi14Curr -ge $config.max_RSI) -and ($rsi30Curr -ge $config.max_RSI) -and ($trend -eq "UP")
-        $shortSignal = ($price -lt $lastEMA21) -and ($rsi6Curr -le $config.min_RSI) -and ($rsi14Curr -le $config.min_RSI) -and ($rsi30Curr -le $config.min_RSI) -and ($trend -eq "DOWN")
+        $longSignal  = ($price -gt $lastEMA21) -and ($rsi6Curr -ge $config.rsi6_max) -and ($rsi14Curr -ge $config.rsi14_max) -and ($rsi30Curr -ge $config.rsi30_max) -and ($trend -eq "UP")
+        $shortSignal = ($price -lt $lastEMA21) -and ($rsi6Curr -le $config.rsi6_min) -and ($rsi14Curr -le $config.rsi14_min) -and ($rsi30Curr -le $config.rsi30_min) -and ($trend -eq "DOWN")
 
         # Write-Output "symbol = $symbol price = $price lastEMA21 = $lastEMA21 rsi6Curr = $rsi6Curr rsi14Curr = $rsi14Curr rsi30Curr = $rsi30Curr trend = $trend"
 
