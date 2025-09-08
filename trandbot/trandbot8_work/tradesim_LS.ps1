@@ -191,7 +191,7 @@ function Open-Position($symbol, $entryPrice, $size, $atr, $tpMultiplier, $trendC
         $sl = [Math]::Round($entryPrice+$minDist,8) 
     }
 
-    # TP для встречной позиции умножаем на 3
+    # TP для встречной позиции умножаем на hedge_multiplier
     $effectiveTpMultiplier = if ($isCounter) { $tpMultiplier * $config.hedge_multiplier } else { $tpMultiplier }
     $tp = if ($side -eq "LONG") { 
         [Math]::Round($entryPrice + [Math]::Max($atr*$effectiveTpMultiplier, $minDist), 8) 
@@ -229,13 +229,14 @@ function Open-Position($symbol, $entryPrice, $size, $atr, $tpMultiplier, $trendC
         IsCounter = [bool]$isCounter
     }
 
-    if (-not $global:positions.ContainsKey($symbol) -or $global:positions[$symbol] -eq $null) {
-    $global:positions[$symbol] = [System.Collections.ArrayList]@()
-    }
-    $global:positions[$symbol].Add($position) | Out-Null
+        if (-not $global:positions.ContainsKey($symbol) -or $global:positions[$symbol] -eq $null) {
+            $global:positions[$symbol] = @()
+        }
 
-    LogConsole "🚀 Открыта $side позиция $symbolDisplay $entryPrice (TP:$tp SL:$sl Size:$size) списано:$totalCost$" $side
-}
+        $global:positions[$symbol] = @($global:positions[$symbol]) + $position
+
+        LogConsole "🚀 Открыта $side позиция $symbolDisplay $entryPrice (TP:$tp SL:$sl Size:$size) списано:$totalCost$" $side
+        }
 
 function Close-Position($symbol, $exitPrice, $reason, $side) {
     if (-not $global:positions.ContainsKey($symbol)) { return }
