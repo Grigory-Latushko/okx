@@ -39,24 +39,14 @@
   "candle_limit": 120,
   "position_size_usd": 10,
   "rerun_interval_s": 10,
-  "candle_period": "1m",
-  "evaluate_candle_period": "1m",
-<<<<<<<< HEAD:trandbot/trandbot8_work/config_1m.json
-  "higher_tf": "15m",
-  "trend_candles": 16,
-  "atrPeriod": 16,
-  "trendsize": 2,
-  "candleRiskLookback": 3,
-  "candleRiskMultiplier": 3,
-  "hedge_multiplier": 4
-========
-  "higher_tf": "5m",
+  "candle_period": "1H",
+  "evaluate_candle_period": "5m",
+  "higher_tf": "4H",
   "trend_candles": 48,
   "atrPeriod": 48,
-  "trendsize": 3,
+  "trendsize": 1,
   "disable_trading_from": "23:00",
   "disable_trading_to": "04:00",
   "candleRiskLookback": 2,
   "candleRiskMultiplier": 3
->>>>>>>> 53d0fbd49d1d3d15d4d20c50fce028684c65b992:trandbot9/config_1m.json
 }
