@@ -3,43 +3,43 @@ param(
     [string]$configPath = ".\config.json"
 )
 
+# Имя лог-файла формируется на основе имени файла конфига
+$logFileName = [IO.Path]::GetFileNameWithoutExtension($configPath)
+$logFile = ".\${logFileName}_trades.log"
+
 $config = Get-Content $configPath | ConvertFrom-Json
+
+# === STATE ===
+$global:positions = @{}               # словарь: ключ = символ, значение = массив позиций
+$global:balance = $config.max_balance
+$global:totalPnL = 0
+$global:winCount = 0
+$global:totalClosed = 0
+$global:candleCache = @{}
+$commissionRate = 0.0009              # 0.09%
+$evaluate_candle_period = $config.evaluate_candle_period
 
 # === UTILS ===
 function Get-Timestamp { return [int][double]::Parse((Get-Date -UFormat %s)) }
 function Format-Time { return (Get-Date -Format "yyyy-MM-dd HH:mm:ss") }
+function Format-Time-FromTS($ts) { return ([DateTimeOffset]::FromUnixTimeSeconds($ts)).LocalDateTime.ToString("yyyy-MM-dd HH:mm:ss") }
+
 function LogConsole($msg, $type = "INFO") {
     $ts = Format-Time
     Write-Host "[$ts][$type] $msg"
 }
 
-# === API CLIENT ===
-# ⚠️ Здесь нужно добавить твои ключи OKX
-$apiKey    = "<API_KEY>"
-$secretKey = "<SECRET_KEY>"
-$passphrase= "<PASSPHRASE>"
-$baseUrl   = "https://www.okx.com"
-
-function Invoke-OKX {
-    param(
-        [string]$method,
-        [string]$endpoint,
-        [string]$body = ""
-    )
-    # TODO: добавить подпись запроса по OKX API (HMAC-SHA256)
-    $url = "$baseUrl$endpoint"
-    $headers = @{
-        "OK-ACCESS-KEY" = $apiKey
-        "OK-ACCESS-PASSPHRASE" = $passphrase
-        # OK-ACCESS-SIGN и OK-ACCESS-TIMESTAMP нужно генерировать
-    }
-    return Invoke-RestMethod -Uri $url -Method $method -Headers $headers -Body $body
-}
+# function LogTradeWithWinRate($pos, $reason) {
+#     $timestamp = Format-Time
+#     $logEntry = "[${timestamp}][TRADE] Закрыта позиция $($pos.Symbol) $($pos.Side) PnL: $($pos.PnL) Причина: $reason Баланс: $($global:balance)`n" +
+#                 "🔄 Баланс: $($global:balance)$ | PnL: $($global:totalPnL) 💵 | Сделок: $global:totalClosed"
+#     Add-Content -Path $logFile -Value $logEntry
+# }
 
 # === DATA FETCH ===
 function Get-Last-Tick($symbol) {
     try {
-        $url = "$baseUrl/api/v5/market/ticker?instId=$symbol"
+        $url = "https://www.okx.com/api/v5/market/ticker?instId=$symbol"
         $res = Invoke-RestMethod -Uri $url -Method Get
         return [double]$res.data[0].last
     } catch {
@@ -49,8 +49,20 @@ function Get-Last-Tick($symbol) {
 }
 
 function Get-Candles($symbol, $limit, $period) {
+    $cacheKey = "$symbol-$period-$limit"
+    
+    # Проверяем, есть ли в кэше и свежие ли данные
+    if ($global:candleCache.ContainsKey($cacheKey)) {
+        $cached = $global:candleCache[$cacheKey]
+        $age = Get-Timestamp - $cached.Timestamp
+        if ($age -lt 60) {  # если кэш моложе 60 секунд
+            return $cached.Candles
+        }
+    }
+
+    # Получаем новые свечи с API
     try {
-        $url = "$baseUrl/api/v5/market/candles?instId=$symbol&bar=$period&limit=$limit"
+        $url = "https://www.okx.com/api/v5/market/candles?instId=$symbol&bar=$period&limit=$limit"
         $res = Invoke-RestMethod -Uri $url -Method Get
         if (-not $res.data) { return @() }
 
@@ -64,6 +76,12 @@ function Get-Candles($symbol, $limit, $period) {
                 Volume    = [double]$_[5]
             }
         } | Sort-Object Timestamp
+
+        # Сохраняем в кэш
+        $global:candleCache[$cacheKey] = @{
+            Candles = $candles
+            Timestamp = Get-Timestamp
+        }
 
         return $candles
     } catch {
@@ -100,7 +118,7 @@ function Calculate-ATR($candles, $period) {
     return $atr
 }
 
-function Get-RSI([double[]]$prices, [int]$period) {
+function Get-RSI([double[]]$prices, [int]$period=14) {
     if ($prices.Count -lt ($period+1)) { return @() }
     $gains=@(); $losses=@()
     for ($i=1; $i -lt $prices.Count; $i++) {
@@ -121,7 +139,7 @@ function Get-RSI([double[]]$prices, [int]$period) {
     return $rsi
 }
 
-function Get-Trend($candles, $atrPeriod, $trend_candles, $trendsize) {
+function Get-Trend($candles, $atrPeriod, $trend_candles, $trendsize=1.0) {
     if (-not $candles -or $candles.Count -lt $trend_candles) { return "NEUTRAL" }
     $atrArr = Calculate-ATR $candles $atrPeriod
     if (-not $atrArr -or $atrArr.Count -eq 0) { return "NEUTRAL" }
@@ -132,88 +150,134 @@ function Get-Trend($candles, $atrPeriod, $trend_candles, $trendsize) {
     if ($delta -gt $lastAtr*$trendsize) { return "UP" } elseif ($delta -lt -$lastAtr*$trendsize) { return "DOWN" } else { return "NEUTRAL" }
 }
 
-function Get-StopLoss($candles,$sl_candles,$direction,$entryPrice,$atr) {
+function Get-StopLoss($candles,$sl_candles,$direction) {
     $recentCandles = $candles | Sort-Object Timestamp | Select-Object -Last $sl_candles
     switch ($direction.ToUpper()) {
-        "LONG" { $sl = ($recentCandles | Measure-Object -Property Close -Minimum).Minimum }
-        "SHORT"{ $sl = ($recentCandles | Measure-Object -Property Close -Maximum).Maximum }
+        "LONG" { return [Math]::Round(($recentCandles | Measure-Object -Property Close -Minimum).Minimum,8) }
+        "SHORT"{ return [Math]::Round(($recentCandles | Measure-Object -Property Close -Maximum).Maximum,8) }
+        default{ throw "Unknown direction: $direction" }
     }
-    $minDist = [Math]::Max($atr * 0.2, $entryPrice * 0.001)
-    if ($direction -eq "LONG" -and ($sl -ge $entryPrice -or [Math]::Abs($entryPrice - $sl) -lt $minDist)) {
-        $sl = $entryPrice - $minDist
-    }
-    if ($direction -eq "SHORT" -and ($sl -le $entryPrice -or [Math]::Abs($entryPrice - $sl) -lt $minDist)) {
-        $sl = $entryPrice + $minDist
-    }
-    return [Math]::Round($sl,8)
 }
 
-# === TRADING ===
-function Get-Position($symbol) {
+# === POSITION LOGIC ===
+function CanOpenNew($symbol) {
+    # Если нет позиций по символу — можно открыть
+    if (-not $global:positions.ContainsKey($symbol) -or $global:positions[$symbol].Count -eq 0) {
+        return $true
+    }
+
+    # Есть хотя бы одна позиция — открытие запрещено
+    return $false
+}
+
+
+function Check-CandleSizeRisk {
+    param (
+        [array]$candles,
+        [double]$atr,
+        [ref]$longSignal,
+        [ref]$shortSignal,
+        [int]$lookback,
+        [double]$multiplier
+    )
+
+    if (-not $candles -or $candles.Count -lt $lookback) { return }
+
+    $recentCandles = $candles | Sort-Object Timestamp | Select-Object -Last $lookback
+
+    foreach ($c in $recentCandles) {
+        $body = [Math]::Abs($c.Close - $c.Open)
+        if ($body -gt ($multiplier * $atr)) {
+            LogConsole "🚫 Свеча слишком большая ($body > $multiplier * ATR=$atr), пропуск входа" "WARN"
+            $longSignal.Value = $false
+            $shortSignal.Value = $false
+            return
+        }
+        
+    }
+}
+
+function Open-Position-Real {
+    param (
+        [string]$symbol,
+        [string]$side,          # "LONG" или "SHORT"
+        [double]$size,          # количество контрактов или сумма в базовой валюте
+        [double]$price,         # цена входа, используйте Market если 0
+        [double]$tp,            # take profit цена
+        [double]$sl,            # stop loss цена
+        [int]$leverage,
+        [hashtable]$apiConfig   # хэш с api_key, secretkey, passphrase
+    )
+
+    # --- Параметры запроса ---
+    $endpoint = "https://www.okx.com/api/v5/trade/order"
+    $clientOrderId = [guid]::NewGuid().ToString()
+
+    # Тип позиции и цены
+    $ordType = if ($price -eq 0) { "market" } else { "limit" }
+
+    # Определяем сторону
+    $posSide = if ($side -eq "LONG") { "long" } else { "short" }
+
+    $body = @{
+        instId = $symbol
+        tdMode = "isolated"
+        side   = $posSide
+        ordType = $ordType
+        sz     = $size.ToString()
+        px     = if ($ordType -eq "limit") { $price.ToString() } else { $null }
+        clOrdId = $clientOrderId
+        lever = $leverage.ToString()
+    } | ConvertTo-Json -Depth 5
+
+    # --- Создание подписи ---
+    # OKX требует HMAC-SHA256, заголовки:
+    #   OK-ACCESS-KEY, OK-ACCESS-SIGN, OK-ACCESS-TIMESTAMP, OK-ACCESS-PASSPHRASE
+    $timestamp = (Get-Date -Format "yyyy-MM-ddTHH:mm:ss.fffZ")
+    $prehash = "$timestamp" + "POST" + "/api/v5/trade/order" + $body
+    $secretBytes = [System.Text.Encoding]::UTF8.GetBytes($apiConfig.secretkey)
+    $prehashBytes = [System.Text.Encoding]::UTF8.GetBytes($prehash)
+    $hmac = New-Object System.Security.Cryptography.HMACSHA256
+    $hmac.Key = $secretBytes
+    $signature = [Convert]::ToBase64String($hmac.ComputeHash($prehashBytes))
+
+    $headers = @{
+        "OK-ACCESS-KEY"       = $apiConfig.api_key
+        "OK-ACCESS-SIGN"      = $signature
+        "OK-ACCESS-TIMESTAMP" = $timestamp
+        "OK-ACCESS-PASSPHRASE"= $apiConfig.passphrase
+        "Content-Type"        = "application/json"
+    }
+
     try {
-        $res = Invoke-OKX -method "GET" -endpoint "/api/v5/account/positions?instId=$symbol"
-        if ($res.data.Count -eq 0) { return "FLAT" }
-
-        $pos = $res.data[0]
-        $size = [double]$pos.pos
-
-        if ($size -gt 0) { return "LONG" }
-        elseif ($size -lt 0) { return "SHORT" }
-        else { return "FLAT" }
+        $res = Invoke-RestMethod -Uri $endpoint -Method Post -Body $body -Headers $headers
+        Write-Host "✅ Открыта реальная позиция $symbol $side размер:$size цена:$price"
+        return $res
     } catch {
-        LogConsole "Ошибка при получении позиции по $symbol $($_)" "ERROR"
-        return "FLAT"
+        Write-Host "❌ Ошибка открытия позиции $symbol $side $_"
+        return $null
     }
 }
 
 
-
-function Place-Order($symbol,$side,$size,$tp,$sl) {
-    $currentPos = Get-Position $symbol
-    LogConsole "📊 Текущая позиция по $symbol = $currentPos" "INFO"
-
-    if ($currentPos -eq "OPEN") {
-        LogConsole "⏸ Уже открыта позиция по $symbol, новый ордер не выставляем" "WARN"
-        return
-    }
-
-    # 1. Открываем позицию
-    $orderBody = @{
-        instId = $symbol
-        tdMode = "cross"
-        side   = $side.ToLower()
-        ordType= "market"
-        sz     = "$size"
-    }
-    $orderResp = Invoke-OKX -method "POST" -endpoint "/api/v5/trade/order" -body ($orderBody | ConvertTo-Json -Compress)
-
-    # 2. Определяем сторону выхода
-    if ($side -eq "BUY") { $closeSide = "sell" } else { $closeSide = "buy" }
-
-    # 3. Ставим TP/SL
-    $algoBody = @{
-        instId = $symbol
-        tdMode = "cross"
-        side   = $closeSide
-        ordType= "conditional"
-        sz     = "$size"
-
-        tpTriggerPx = "$tp"
-        tpOrdPx     = "-1"   # по рынку
-        slTriggerPx = "$sl"
-        slOrdPx     = "-1"
-    }
-    $algoResp = Invoke-OKX -method "POST" -endpoint "/api/v5/trade/order-algo" -body ($algoBody | ConvertTo-Json -Compress)
-
-    LogConsole "✅ Сделка открыта: entry=$($orderResp.data[0].ordId), TP/SL algo=$($algoResp.data[0].algoId)" "TRADE"
-}
-
-
-# === MAIN LOOP ===
+# === MAIN BOT LOOP ===
 function Run-Bot {
+    
+    $winRate   = if ($global:totalClosed -gt 0) { [Math]::Round(($global:winCount/$global:totalClosed)*100,2) } else { 0 }
+    $timestamp = Format-Time
+    
+    LogConsole "🔄 Новый цикл. Баланс:$($global:balance)$ | PnL:$($global:totalPnL) 💵 | Сделок:$global:totalClosed | WinRate:$winRate%" "INFO"
+    $logEntry = "🔄 ${timestamp} Баланс: $($global:balance)$ | PnL: $($global:totalPnL) 💵 | Сделок: $global:totalClosed | WinRate: $winRate%"
+
+    Add-Content -Path $logFile -Value $logEntry
+
     foreach ($symbol in $config.instruments) {
+        
+        # --- Получаем свечи с кэшированием ---
         $candles = Get-Candles $symbol $config.candle_limit $config.candle_period
         if ($candles.Count -lt 50) { continue }
+
+        # Write-Output "Debug 1"
 
         $closes   = $candles | ForEach-Object { $_.Close }
         $ema21    = Calculate-EMA $closes 21
@@ -221,6 +285,8 @@ function Run-Bot {
         $rsi14Arr = Get-RSI $closes 14
         $rsi30Arr = Get-RSI $closes 30
         if ($rsi6Arr.Count -lt 2 -or $rsi14Arr.Count -lt 2 -or $rsi30Arr.Count -lt 2) { continue }
+
+        # Write-Output "Debug 2"
 
         $rsi6Curr  = $rsi6Arr[-1]
         $rsi14Curr = $rsi14Arr[-1]
@@ -235,26 +301,43 @@ function Run-Bot {
         $size = [Math]::Round($config.position_size_usd/$price,4)
         $trend_candles = $config.trend_candles
         $tpMultiplier  = $config.tp_ATR
-        $trend         = Get-Trend $candles $config.atrPeriod $trend_candles $config.trend_size
+        $trend         = Get-Trend $candles $config.atrPeriod $trend_candles
         $lastEMA21     = $ema21[-1]
 
         $longSignal  = ($price -gt $lastEMA21) -and ($rsi6Curr -ge $config.rsi6_max) -and ($rsi14Curr -ge $config.rsi14_max) -and ($rsi30Curr -ge $config.rsi30_max) -and ($trend -eq "UP")
         $shortSignal = ($price -lt $lastEMA21) -and ($rsi6Curr -le $config.rsi6_min) -and ($rsi14Curr -le $config.rsi14_min) -and ($rsi30Curr -le $config.rsi30_min) -and ($trend -eq "DOWN")
 
-        if ($longSignal) {
-            $sl = Get-StopLoss $candles $trend_candles "LONG" $price $atr
-            $tp = [Math]::Round($price + [Math]::Max($atr * $tpMultiplier, $price*0.001),8)
-            Place-Order $symbol "BUY" $size $tp $sl
+        # Write-Output "symbol = $symbol price = $price lastEMA21 = $lastEMA21 rsi6Curr = $rsi6Curr rsi14Curr = $rsi14Curr rsi30Curr = $rsi30Curr trend = $trend"
+
+        # Проверка больших свечей
+        Check-CandleSizeRisk `
+            -candles $candles `
+            -atr $atr `
+            -longSignal ([ref]$longSignal) `
+            -shortSignal ([ref]$shortSignal) `
+            -lookback $config.candleRiskLookback `
+            -multiplier $config.candleRiskMultiplier
+
+        # --- Открытие LONG ---
+        if ($longSignal -and (CanOpenNew $symbol)) {
+            $isCounter = $false
+            Open-Position $symbol $price $size $atr $tpMultiplier $trend_candles "LONG" $candles $isCounter
+        } else {
+            Write-Host "Нельзя открыть позицию — уже есть открытая"
         }
 
-        if ($shortSignal) {
-            $sl = Get-StopLoss $candles $trend_candles "SHORT" $price $atr
-            $tp = [Math]::Round($price - [Math]::Max($atr * $tpMultiplier, $price*0.001),8)
-            Place-Order $symbol "SELL" $size $tp $sl
-        }
+        # --- Открытие SHORT ---
+        if ($shortSignal -and (CanOpenNew $symbol)) {
+            $isCounter = $false
+            Open-Position $symbol $price $size $atr $tpMultiplier $trend_candles "SHORT" $candles $isCounter
+        } else {
+            Write-Host "Нельзя открыть позицию — уже есть открытая"
+    }
 
-        Start-Sleep -Milliseconds 200
+        Start-Sleep -Milliseconds 100
     }
 }
 
+# === MAIN LOOP ===
+if (Test-Path $logFile) { Remove-Item $logFile -Force }
 while ($true) { Run-Bot; Start-Sleep -Seconds $config.rerun_interval_s }

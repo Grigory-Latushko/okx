@@ -307,7 +307,6 @@ function Close-Position($symbol, $exitPrice, $reason, $side) {
 
     $remaining = $posList | Where-Object { $_.OpenedAt -ne $pos.OpenedAt }
     $global:positions[$symbol] = [System.Collections.ArrayList]@($remaining)
-
 }
 
 function Evaluate-Position($symbol) {
