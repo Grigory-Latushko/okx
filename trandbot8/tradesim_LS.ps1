@@ -167,9 +167,9 @@ function CanOpenNew($symbol, $side, [ref]$isCounter) {
     if ($sameSide.Count -gt 0) { return $false }
 
     # Проверка на встречную позицию
-    $oppositeSide = if ($side -eq "LONG") { "SHORT" } else { "LONG" }
-    $oppositePos = $global:positions[$symbol] | Where-Object { $_.Side -eq $oppositeSide }
-    if ($oppositePos.Count -gt 0) { $isCounter.Value = $true }
+    # $oppositeSide = if ($side -eq "LONG") { "SHORT" } else { "LONG" }
+    # $oppositePos = $global:positions[$symbol] | Where-Object { $_.Side -eq $oppositeSide }
+    # if ($oppositePos.Count -gt 0) { $isCounter.Value = $true }
 
     return $true
 }
@@ -196,7 +196,6 @@ function Check-CandleSizeRisk {
             $shortSignal.Value = $false
             return
         }
-        
     }
 }
 
@@ -232,11 +231,11 @@ function Open-Position(
     }
 
     # TP для встречной позиции умножаем на hedge_multiplier
-    $effectiveTpMultiplier = if ($isCounter) { 
-        $tpMultiplier * $config.hedge_multiplier 
-    } else { 
-        $tpMultiplier 
-    }
+    # $effectiveTpMultiplier = if ($isCounter) { 
+    #     $tpMultiplier * $config.hedge_multiplier 
+    # } else { 
+    #     $tpMultiplier 
+    # }
 
     $tp = if ($side -eq "LONG") { 
         [Math]::Round($entryPrice + [Math]::Max($atr * $effectiveTpMultiplier, $minDist), 8) 
@@ -375,6 +374,21 @@ function Run-Bot {
         $atrArr    = Calculate-ATR $candles $config.atrPeriod
         if ($atrArr.Count -eq 0) { continue }
 
+# HIGHER TIMEFRAME TREND FILTER
+        $higherCandles = Get-Candles $symbol $config.candle_limit $config.higher_tf
+        if ($higherCandles.Count -lt ($config.trend_candles + 10)) { continue }
+
+        $higher_closes   = $higherCandles | ForEach-Object { $_.Close }
+        $higher_ema21    = Calculate-EMA $higher_closes 21
+        $higher_rsi6Arr  = Get-RSI $higher_closes 6
+        $higher_rsi14Arr = Get-RSI $higher_closes 14
+        $higher_rsi30Arr = Get-RSI $higher_closes 30
+        if ($higher_rsi6Arr.Count -lt 2 -or $higher_rsi14Arr.Count -lt 2 -or $higher_rsi30Arr.Count -lt 2) { continue }
+
+        $higher_rsi6Curr  = $higher_rsi6Arr[-1]
+        $higher_rsi14Curr = $higher_rsi14Arr[-1]
+        $higher_rsi30Curr = $higher_rsi30Arr[-1]
+
         $atr = $atrArr[-1]
         $price = Get-Last-Tick $symbol
         if ($null -eq $price) { continue }
@@ -385,8 +399,8 @@ function Run-Bot {
         $trend         = Get-Trend $candles $config.atrPeriod $trend_candles
         $lastEMA21     = $ema21[-1]
 
-        $longSignal  = ($price -gt $lastEMA21) -and ($rsi6Curr -ge $config.rsi6_max) -and ($rsi14Curr -ge $config.rsi14_max) -and ($rsi30Curr -ge $config.rsi30_max) -and ($trend -eq "UP")
-        $shortSignal = ($price -lt $lastEMA21) -and ($rsi6Curr -le $config.rsi6_min) -and ($rsi14Curr -le $config.rsi14_min) -and ($rsi30Curr -le $config.rsi30_min) -and ($trend -eq "DOWN")
+        $longSignal  = ($price -gt $lastEMA21) -and ($rsi6Curr -ge $config.rsi6_max) -and ($rsi14Curr -ge $config.rsi14_max) -and ($rsi30Curr -ge $config.rsi30_max) -and ($higher_rsi6Curr -ge $config.rsi6_max) -and ($higher_rsi14Curr -ge $config.rsi14_max) -and ($higher_rsi30Curr -ge $config.rsi30_max) -and ($trend -eq "UP")
+        $shortSignal = ($price -le $lastEMA21) -and ($rsi6Curr -le $config.rsi6_min) -and ($rsi14Curr -le $config.rsi14_min) -and ($rsi30Curr -le $config.rsi30_min) -and ($higher_rsi6Curr -le $config.rsi6_min) -and ($higher_rsi14Curr -le $config.rsi14_min) -and ($higher_rsi30Curr -le $config.rsi30_min) -and ($trend -eq "DOWN")
 
         # Write-Output "symbol = $symbol price = $price lastEMA21 = $lastEMA21 rsi6Curr = $rsi6Curr rsi14Curr = $rsi14Curr rsi30Curr = $rsi30Curr trend = $trend"
 
