@@ -4,3 +4,4 @@ SL added
 EMA added. Not implemented
 EMA condition added
 RSI added
+Loop added. Can trade long
