@@ -66,14 +66,21 @@ function Send-OkxRequest {
     return $null
   }
 }
-function Get-Price { param($instId, $config) Log "Получаем цену для $instId" "DEBUG"; $resp = Send-OkxRequest -Method "GET" -RequestPath "/api/v5/market/ticker?instId=$($instId)" -BodyJson "" -config $config; if ($resp -and $resp.data -and $resp.data.Count -ge 1) { $p = [decimal]$resp.data[0].last; Log "Цена $instId = $p" "OK"; return $p } Log "Не удалось получить цену $instId" "WARN"; return $null }
-function Get-InstrumentInfo { param($instId, $config) Log "Получаем информацию об инструменте $instId" "DEBUG"; $resp = Send-OkxRequest -Method "GET" -RequestPath "/api/v5/public/instruments?instType=SWAP&instId=$($instId)" -BodyJson "" -config $config; if ($resp -and $resp.data -and $resp.data.Count -ge 1) { return $resp.data[0] } return $null }
-
-function Round-ToStep { param($value, $step) if ($step -eq 0 -or $null -eq $step) { return [math]::Round($value, 8) } $quotient = [math]::Floor(($value / $step) + 0.0000000001); $rounded = $quotient * $step; return [decimal]$([math]::Round([double]$rounded, 8)) }
-
-function RoundPriceToTick { param($price, $tick) if ($tick -eq 0 -or $null -eq $tick) { return [math]::Round($price, 8) } $q = [math]::Round($price / $tick, 8); $r = [math]::Round($q) * $tick; return [decimal]$([math]::Round([double]$r, 8)) }
-
-function Get-AccountConfig { param($config) Log "Получаем конфиг аккаунта (/api/v5/account/config)" "DEBUG"; $resp = Send-OkxRequest -Method "GET" -RequestPath "/api/v5/account/config" -BodyJson "" -config $config; if ($resp -and $resp.data -and $resp.data.Count -ge 1) { $d = $resp.data[0]; if ($d.psMode) { return $d.psMode }; if ($d.posMode) { return $d.posMode }; if ($d.positionMode) { return $d.positionMode }; return $resp.data }; return $null }
+function Get-Price { 
+    param($instId, $config) Log "Получаем цену для $instId" "DEBUG"; $resp = Send-OkxRequest -Method "GET" -RequestPath "/api/v5/market/ticker?instId=$($instId)" -BodyJson "" -config $config; if ($resp -and $resp.data -and $resp.data.Count -ge 1) { $p = [decimal]$resp.data[0].last; Log "Цена $instId = $p" "OK"; return $p } Log "Не удалось получить цену $instId" "WARN"; return $null 
+}
+function Get-InstrumentInfo { 
+    param($instId, $config) Log "Получаем информацию об инструменте $instId" "DEBUG"; $resp = Send-OkxRequest -Method "GET" -RequestPath "/api/v5/public/instruments?instType=SWAP&instId=$($instId)" -BodyJson "" -config $config; if ($resp -and $resp.data -and $resp.data.Count -ge 1) { return $resp.data[0] } return $null 
+}
+function Round-ToStep {
+    param($value, $step) if ($step -eq 0 -or $null -eq $step) { return [math]::Round($value, 8) } $quotient = [math]::Floor(($value / $step) + 0.0000000001); $rounded = $quotient * $step; return [decimal]$([math]::Round([double]$rounded, 8)) 
+}
+function RoundPriceToTick { 
+    param($price, $tick) if ($tick -eq 0 -or $null -eq $tick) { return [math]::Round($price, 8) } $q = [math]::Round($price / $tick, 8); $r = [math]::Round($q) * $tick; return [decimal]$([math]::Round([double]$r, 8)) 
+}
+function Get-AccountConfig { 
+   param($config) Log "Получаем конфиг аккаунта (/api/v5/account/config)" "DEBUG"; $resp = Send-OkxRequest -Method "GET" -RequestPath "/api/v5/account/config" -BodyJson "" -config $config; if ($resp -and $resp.data -and $resp.data.Count -ge 1) { $d = $resp.data[0]; if ($d.psMode) { return $d.psMode }; if ($d.posMode) { return $d.posMode }; if ($d.positionMode) { return $d.positionMode }; return $resp.data }; return $null 
+}
 
 # ---------------- apply leverage (isolated) ----------------
 function Set-IsolatedLeverage {
@@ -171,7 +178,6 @@ function Calculate-EMA($prices, $period) {
     }
     return $ema
 }
-
 function Get-RSI([double[]]$prices, [int]$period=14) {
     if (-not $prices -or $prices.Count -lt ($period + 1)) { return @() }
     $gains = New-Object System.Collections.Generic.List[double]
@@ -271,6 +277,18 @@ function Run-Bot {
     foreach ($instId in $config.instruments) {
         Write-Host "`n=== Processing $instId ===" -ForegroundColor White
 
+        # проверка уже открытых позиций
+        if ($authOk) {
+            $positionsResp = Send-OkxRequest -Method "GET" -RequestPath "/api/v5/account/positions?instId=$instId" -BodyJson "" -config $config
+            if ($positionsResp -and $positionsResp.data -and $positionsResp.data.Count -gt 0) {
+                $openPos = $positionsResp.data | Where-Object { $_.pos -ne 0 }
+                if ($openPos.Count -gt 0) {
+                    Log "Открытая позиция уже существует для $instId, пропускаем" "WARN"
+                    continue
+                }
+            }
+        }
+        
         ############ TRADE CONDITIONS CALCULATION ############
         $candles = Get-Candles $instId $candle_limit $candle_period
         Write-Output "Получено $($candles.Count) свечей для $instId по таймфрейму $candle_period"
@@ -302,13 +320,14 @@ function Run-Bot {
             Write-Output "RSI30: $rsi30Curr"
 
         $higherCandles = Get-Candles $instId $candle_limit $higher_tf
-        Write-Output "Получено $($higherCandles.Count) свечей для $instId по таймфрейму $higher_tf"
-       if ($higherCandles.Count -lt ($config.trend_candles + 10)) { continue }
+            Write-Output "Получено $($higherCandles.Count) свечей для $instId по таймфрейму $higher_tf"
+        if ($higherCandles.Count -lt ($config.trend_candles + 10)) { continue }
+
         $higher_closes   = $higherCandles | ForEach-Object { $_.Close }
         $higher_rsi6Arr  = Get-RSI $higher_closes 6
         $higher_rsi14Arr = Get-RSI $higher_closes 14
         $higher_rsi30Arr = Get-RSI $higher_closes 30
-       if ($higher_rsi6Arr.Count -lt 1 -or $higher_rsi14Arr.Count -lt 1 -or $higher_rsi30Arr.Count -lt 1) { continue }
+        if ($higher_rsi6Arr.Count -lt 1 -or $higher_rsi14Arr.Count -lt 1 -or $higher_rsi30Arr.Count -lt 1) { continue }
 
         $higher_rsi6Curr  = $higher_rsi6Arr[-1]
             write-Output "Higher TF RSI6: $higher_rsi6Curr"
@@ -333,17 +352,17 @@ function Run-Bot {
             continue
         }
         ##########################################################
-        # проверка уже открытых позиций
-        if ($authOk) {
-            $positionsResp = Send-OkxRequest -Method "GET" -RequestPath "/api/v5/account/positions?instId=$instId" -BodyJson "" -config $config
-            if ($positionsResp -and $positionsResp.data -and $positionsResp.data.Count -gt 0) {
-                $openPos = $positionsResp.data | Where-Object { $_.pos -ne 0 }
-                if ($openPos.Count -gt 0) {
-                    Log "Открытая позиция уже существует для $instId, пропускаем" "WARN"
-                    continue
-                }
-            }
-        }
+        # # проверка уже открытых позиций
+        # if ($authOk) {
+        #     $positionsResp = Send-OkxRequest -Method "GET" -RequestPath "/api/v5/account/positions?instId=$instId" -BodyJson "" -config $config
+        #     if ($positionsResp -and $positionsResp.data -and $positionsResp.data.Count -gt 0) {
+        #         $openPos = $positionsResp.data | Where-Object { $_.pos -ne 0 }
+        #         if ($openPos.Count -gt 0) {
+        #             Log "Открытая позиция уже существует для $instId, пропускаем" "WARN"
+        #             continue
+        #         }
+        #     }
+        # }
         
         if ($null -eq $price) { Log "Skipping $instId — price not available" "WARN"; continue }
 
