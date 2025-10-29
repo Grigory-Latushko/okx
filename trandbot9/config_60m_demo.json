@@ -1,0 +1,17 @@
+{
+  "api_key": "b96aa16d-c4f0-4c5f-9f6b-240603235d8d",
+  "secret_key": "42BF8BBF0F28F7D3E65DC8B6409188E8",
+  "passphrase": "Aa111111!",
+  "instruments": [
+    "ETH-USDT-SWAP"
+  ],
+  "position_size_usd": 3,
+  "leverage": 10,
+  "set_leverage": false,
+  "mgnMode": "cross",
+  "force_min_size": true,
+  "force_threshold_factor": 3,
+  "dryRun": false,
+  "simulated": true,
+  "baseUrl": "https://www.okx.com"
+}
