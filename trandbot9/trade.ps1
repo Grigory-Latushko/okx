@@ -86,8 +86,7 @@ try { $cfg = $cfgRaw | ConvertFrom-Json } catch { Log "Invalid JSON in config: $
 function GetCfgVal($obj, $names, $default) { foreach ($n in $names) { if ($obj.PSObject.Properties.Name -contains $n) { return $obj.$n } } return $default }
 
 $simFlag = GetCfgVal $cfg @("simulated","sim","demo","simulated_trading") $null
-$simBool = $null
-if ($simFlag -ne $null) { $simBool = [bool]$simFlag } else { $simBool = $null }
+$simBool = if ($simFlag -ne $null) { [bool]$simFlag } else { $null }
 
 $Cfg = [PSCustomObject]@{
   api_key           = GetCfgVal $cfg @("api_key","apiKey","apikey") $null
@@ -104,8 +103,8 @@ $Cfg = [PSCustomObject]@{
   force_threshold_factor = [decimal](GetCfgVal $cfg @("force_threshold_factor","forceThresholdFactor") 3)
   simulated         = $simBool
   take_profit_pct   = [decimal](GetCfgVal $cfg @("take_profit_pct","tp_pct") 0.01)
-  tp_trigger_type   = GetCfgVal $cfg @("tp_trigger_type","tpTriggerType") "last"   # last/index/mark
-  tp_exec_market    = [bool](GetCfgVal $cfg @("tp_exec_market","tpMarket") $true)   # true -> tpOrdPx = -1 (market on trigger)
+  tp_trigger_type   = GetCfgVal $cfg @("tp_trigger_type","tpTriggerType") "last"
+  tp_exec_market    = [bool](GetCfgVal $cfg @("tp_exec_market","tpMarket") $true)
 }
 
 $cfgMasked = @{ api_key = Mask($Cfg.api_key); secret_key = Mask($Cfg.secret_key); passphrase = Mask($Cfg.passphrase); position_size_usd = $Cfg.position_size_usd; leverage = $Cfg.leverage; baseUrl = $Cfg.baseUrl; instruments = $Cfg.instruments; take_profit_pct = $Cfg.take_profit_pct; tp_exec_market = $Cfg.tp_exec_market; dryRun = $Cfg.dryRun }
@@ -114,137 +113,130 @@ Log "Loaded config: $($cfgMasked | ConvertTo-Json -Depth 5)" "DEBUG"
 if (-not $Cfg.api_key -or -not $Cfg.secret_key -or -not $Cfg.passphrase) { Log "api_key / secret_key / passphrase must be provided in config file" "ERROR"; exit 1 }
 if (-not $Cfg.instruments -or $Cfg.instruments.Count -eq 0) { Log "No instruments provided in config -> 'instruments' array" "ERROR"; exit 1 }
 
-# time sync (optional)
+# ---------------- auth & time ----------------
 try {
-  $timeResp = Send-OkxRequest -Method "GET" -RequestPath "/api/v5/public/time" -BodyJson "" -Cfg $Cfg
-  if ($timeResp -and $timeResp.data -and $timeResp.data.Count -ge 1) {
-    $serverIso = $timeResp.data[0].iso
-    try { $serverTs = [datetime]::ParseExact($serverIso, "yyyy-MM-ddTHH:mm:ss.fffZ", $null).ToUniversalTime() } catch { $serverTs = [datetime]::Parse($serverIso).ToUniversalTime() }
-    $localUtc = (Get-Date).ToUniversalTime(); $delta = [math]::Abs(($serverTs - $localUtc).TotalSeconds)
-    Log "Server time: $serverTs, Local UTC: $localUtc, delta(s) = $delta" "DEBUG"
-    if ($delta -gt 30) { Log "Local time differs by >30s. Sync clock (NTP)." "WARN" }
-  }
+    $timeResp = Send-OkxRequest -Method "GET" -RequestPath "/api/v5/public/time" -BodyJson "" -Cfg $Cfg
+    if ($timeResp -and $timeResp.data -and $timeResp.data.Count -ge 1) {
+        $serverIso = $timeResp.data[0].iso
+        $serverTs = try { [datetime]::ParseExact($serverIso, "yyyy-MM-ddTHH:mm:ss.fffZ", $null).ToUniversalTime() } catch { [datetime]::Parse($serverIso).ToUniversalTime() }
+        $localUtc = (Get-Date).ToUniversalTime(); $delta = [math]::Abs(($serverTs - $localUtc).TotalSeconds)
+        Log "Server time: $serverTs, Local UTC: $localUtc, delta(s) = $delta" "DEBUG"
+        if ($delta -gt 30) { Log "Local time differs by >30s. Sync clock (NTP)." "WARN" }
+    }
 } catch {}
 
-# auth check
 $authOk = $true
 $balResp = Send-OkxRequest -Method "GET" -RequestPath "/api/v5/account/balance" -BodyJson "" -Cfg $Cfg
 if ($null -eq $balResp) { Log "Warning: failed to call private endpoint /account/balance. Check API key permissions, IP whitelist, or environment (demo vs live)." "WARN"; $authOk = $false } else { Log "/account/balance OK (auth check passed)" "DEBUG" }
 
-# account posMode
 $posMode = $null
 if ($authOk) {
-  $cfgResp = Get-AccountConfig -Cfg $Cfg
-  if ($cfgResp) { Log "Account config posMode: $cfgResp" "DEBUG"; $posMode = $cfgResp } else { Log "Could not fetch account config (posMode). posMode unknown." "DEBUG" }
+    $cfgResp = Get-AccountConfig -Cfg $Cfg
+    if ($cfgResp) { Log "Account config posMode: $cfgResp" "DEBUG"; $posMode = $cfgResp } else { Log "Could not fetch account config (posMode). posMode unknown." "DEBUG" }
 }
 
-# loop instruments
+# ---------------- loop instruments ----------------
 foreach ($instId in $Cfg.instruments) {
-  Write-Host "`n=== Processing $instId ===" -ForegroundColor White
+    Write-Host "`n=== Processing $instId ===" -ForegroundColor White
 
-  $price = Get-Price -instId $instId -Cfg $Cfg
-  if ($null -eq $price) { Log "Skipping $instId — price not available" "WARN"; continue }
-
-  $info = Get-InstrumentInfo -instId $instId -Cfg $Cfg
-  $contractMode = $false; $ctVal = $null; $step = $null; $tick = $null
-  if ($info) {
-    if ($info.ctVal) { $ctVal = [decimal]$info.ctVal; $contractMode = $true }
-    if ($info.minSz) { $step = [decimal]$info.minSz } elseif ($info.lotSz) { $step = [decimal]$info.lotSz } elseif ($info.sz) { $step = [decimal]$info.sz }
-    if ($info.tickSz) { $tick = [decimal]$info.tickSz }
-    Log "Instrument meta: ctVal=$ctVal, step/minSz=$step, tickSz=$tick" "DEBUG"
-  }
-
-  $notional_desired = [decimal]($Cfg.position_size_usd * $Cfg.leverage)
-  Log "Desired notional = $notional_desired USD" "DEBUG"
-
-  if ($contractMode -and $ctVal -ne $null -and $ctVal -gt 0) {
-    $rawContracts = [decimal]($notional_desired / ($ctVal * $price))
-    if ($null -eq $step -or $step -le 0) { $step = 1 }
-    $sz = Round-ToStep -value $rawContracts -step $step
-    Log "rawContracts = $rawContracts, rounded contracts sz = $sz (contract step = $step)" "DEBUG"
-  } else {
-    $rawSize = [decimal]($notional_desired / $price)
-    if ($null -eq $step -or $step -le 0) { if ($price -gt 1000) { $step = 0.0001 } elseif ($price -lt 1) { $step = 0.01 } else { $step = 0.0001 } }
-    $sz = Round-ToStep -value $rawSize -step $step
-    Log "rawSize (coin qty) = $rawSize, rounded sz = $sz (coin step = $step)" "DEBUG"
-  }
-
-  if ($sz -le 0) {
-    if ($Cfg.force_min_size -and $step -gt 0) {
-      if ($contractMode -and $ctVal -ne $null) { $notional_if_forced = [math]::Round(($step * $ctVal * $price), 8) } else { $notional_if_forced = [math]::Round(($step * $price), 8) }
-      $threshold = $Cfg.force_threshold_factor
-      if ($notional_if_forced -gt ($notional_desired * $threshold)) { Log "Forcing minimal step would create notional $notional_if_forced USD > $threshold × desired. Skipping" "WARN"; continue }
-      Log "rawSize < step; forcing sz = step ($step). forced notional = $notional_if_forced USD" "WARN"
-      $sz = $step
-    } else { Log "After rounding sz = 0 and force_min_size is false -> skipping $instId" "WARN"; continue }
-  }
-
-  if ($contractMode -and $ctVal -ne $null) { $notional_actual = [math]::Round(($sz * $ctVal * $price), 8) } else { $notional_actual = [math]::Round(($sz * $price), 8) }
-  Log "Final: sz = $sz (step $step). notional_actual = $notional_actual USD" "INFO"
-
-  # optional set leverage
-  if ($Cfg.set_leverage -and $Cfg.leverage -gt 1) {
-    if (-not $authOk) { Log "Skipping set-leverage because earlier auth check failed" "WARN" } else { $setResp = Set-Leverage -instId $instId -lever $Cfg.leverage -mgnMode $Cfg.mgnMode -Cfg $Cfg; if ($null -eq $setResp) { Log "Failed to set leverage; skipping" "ERROR"; continue } }
-  }
-
-  # build opening order (market buy) and attach TP via attachAlgoOrds
-  $side = "buy"
-  $orderObj = @{ instId = $instId; tdMode = $Cfg.mgnMode; side = $side; ordType = "market"; sz = ([string]$sz) }
-
-  # posSide handling (long/short mode)
-  if ($contractMode -and $posMode -ne $null) {
-    $pm = $posMode.ToString().ToLower()
-    if ($pm -like "*long*" -or $pm -like "*long_short*") {
-      $orderObj.posSide = if ($side -eq "buy") { "long" } else { "short" }
-      Log "posMode=$posMode -> adding posSide='$($orderObj.posSide)' to order" "DEBUG"
+    # проверка уже открытых позиций
+    if ($authOk) {
+        $positionsResp = Send-OkxRequest -Method "GET" -RequestPath "/api/v5/account/positions?instId=$instId" -BodyJson "" -Cfg $Cfg
+        if ($positionsResp -and $positionsResp.data -and $positionsResp.data.Count -gt 0) {
+            $openPos = $positionsResp.data | Where-Object { $_.pos -ne 0 }
+            if ($openPos.Count -gt 0) {
+                Log "Открытая позиция уже существует для $instId, пропускаем" "WARN"
+                continue
+            }
+        }
     }
-  } elseif ($contractMode) {
-    $orderObj.posSide = if ($side -eq "buy") { "long" } else { "short" }
-    Log "posMode unknown -> adding posSide for contract (conservative)" "DEBUG"
-  }
 
-  # compute TP trigger price (estimate using current ticker 'price' — will attach to the order)
-  $tpPct = $Cfg.take_profit_pct
-  $estimatedEntry = $price
-  $tpTriggerRaw = [decimal]($estimatedEntry * (1 + $tpPct))
-  if ($tick -ne $null -and $tick -gt 0) { $tpTrigger = RoundPriceToTick -price $tpTriggerRaw -tick $tick } else { $tpTrigger = [math]::Round($tpTriggerRaw, 8) }
+    $price = Get-Price -instId $instId -Cfg $Cfg
+    if ($null -eq $price) { Log "Skipping $instId — price not available" "WARN"; continue }
 
-  # prepare attachAlgoOrds object
-  # we'll set tpOrdPx = -1 (market on trigger) to avoid needing to supply SL for TP-limit in some modes
-  # attachAlgoClOrdId must be alphanumeric only (no underscores); up to 32 chars.
-  $attachId = ("tp" + [guid]::NewGuid().ToString("N").Substring(0,16))
-  $attachObj = @{
-    attachAlgoClOrdId = $attachId
-    tpTriggerPx = ([string]$tpTrigger)
-    tpTriggerPxType = $Cfg.tp_trigger_type
-    tpOrdPx = if ($Cfg.tp_exec_market) { "-1" } else { ([string]$tpTrigger) }   # -1 = market on trigger, else limit price
-    sz = ([string]$sz)
-  }
+    $info = Get-InstrumentInfo -instId $instId -Cfg $Cfg
+    $contractMode = $false; $ctVal = $null; $step = $null; $tick = $null
+    if ($info) {
+        if ($info.ctVal) { $ctVal = [decimal]$info.ctVal; $contractMode = $true }
+        if ($info.minSz) { $step = [decimal]$info.minSz } elseif ($info.lotSz) { $step = [decimal]$info.lotSz } elseif ($info.sz) { $step = [decimal]$info.sz }
+        if ($info.tickSz) { $tick = [decimal]$info.tickSz }
+        Log "Instrument meta: ctVal=$ctVal, step/minSz=$step, tickSz=$tick" "DEBUG"
+    }
 
-  # attach to the main order
-  $orderObj.attachAlgoOrds = @($attachObj)
+    $notional_desired = [decimal]($Cfg.position_size_usd * $Cfg.leverage)
+    Log "Desired notional = $notional_desired USD" "DEBUG"
 
-  $orderJson = $orderObj | ConvertTo-Json -Depth 10 -Compress
-  Log "Open order with attachAlgoOrds: $orderJson" "DEBUG"
+    if ($contractMode -and $ctVal -ne $null -and $ctVal -gt 0) {
+        $rawContracts = [decimal]($notional_desired / ($ctVal * $price))
+        if ($null -eq $step -or $step -le 0) { $step = 1 }
+        $sz = Round-ToStep -value $rawContracts -step $step
+        Log "rawContracts = $rawContracts, rounded contracts sz = $sz (contract step = $step)" "DEBUG"
+    } else {
+        $rawSize = [decimal]($notional_desired / $price)
+        if ($null -eq $step -or $step -le 0) { if ($price -gt 1000) { $step = 0.0001 } elseif ($price -lt 1) { $step = 0.01 } else { $step = 0.0001 } }
+        $sz = Round-ToStep -value $rawSize -step $step
+        Log "rawSize (coin qty) = $rawSize, rounded sz = $sz (coin step = $step)" "DEBUG"
+    }
 
-  if (-not $authOk) { Log "Auth check earlier failed. Will not place real orders. (Use -ForceLive to override if you know what you're doing)" "WARN"; continue }
+    if ($sz -le 0) {
+        if ($Cfg.force_min_size -and $step -gt 0) {
+            if ($contractMode -and $ctVal -ne $null) { $notional_if_forced = [math]::Round(($step * $ctVal * $price), 8) } else { $notional_if_forced = [math]::Round(($step * $price), 8) }
+            $threshold = $Cfg.force_threshold_factor
+            if ($notional_if_forced -gt ($notional_desired * $threshold)) { Log "Forcing minimal step would create notional $notional_if_forced USD > $threshold × desired. Skipping" "WARN"; continue }
+            Log "rawSize < step; forcing sz = step ($step). forced notional = $notional_if_forced USD" "WARN"
+            $sz = $step
+        } else { Log "After rounding sz = 0 and force_min_size is false -> skipping $instId" "WARN"; continue }
+    }
 
-  # place market order with attached TP
-  $resp = Send-OkxRequest -Method "POST" -RequestPath "/api/v5/trade/order" -BodyJson $orderJson -Cfg $Cfg
+    if ($contractMode -and $ctVal -ne $null) { $notional_actual = [math]::Round(($sz * $ctVal * $price), 8) } else { $notional_actual = [math]::Round(($sz * $price), 8) }
+    Log "Final: sz = $sz (step $step). notional_actual = $notional_actual USD" "INFO"
 
-  if ($resp -and $resp.dryRun) {
-    Log "DRY RUN — order preview (attached TP shown in preview)" "WARN"
-    ($resp | ConvertTo-Json -Depth 6) | Write-Host
-  } elseif ($null -eq $resp) {
-    Log "Order failed or empty response" "ERROR"
-    continue
-  } else {
-    Log "Order response:" "OK"
-    ($resp | ConvertTo-Json -Depth 8) | Write-Host
-    # usually OKX will show attachAlgoOrds info in response or populate attached orders after fill
-  }
+    # ---------------- apply leverage ----------------
+    if ($Cfg.set_leverage -and $Cfg.leverage -gt 1) {
+        if (-not $authOk) {
+            Log "Skipping set-leverage because earlier auth check failed" "WARN"
+        } else {
+            Log "Applying leverage $($Cfg.leverage) for $instId" "INFO"
+            $setResp = Set-Leverage -instId $instId -lever $Cfg.leverage -mgnMode $Cfg.mgnMode -Cfg $Cfg
+            if ($null -eq $setResp) { Log "Failed to set leverage; skipping" "ERROR" } else { Log "Set-Leverage response: $(ConvertTo-Json $setResp -Depth 5)" "INFO" }
+        }
+    }
 
-  Start-Sleep -Milliseconds 500
+    # ---------------- place market order + attach TP ----------------
+    $side = "buy"
+    $orderObj = @{ instId = $instId; tdMode = $Cfg.mgnMode; side = $side; ordType = "market"; sz = ([string]$sz) }
+    if ($contractMode -and $posMode -ne $null) {
+        $pm = $posMode.ToString().ToLower()
+        if ($pm -like "*long*" -or $pm -like "*long_short*") { $orderObj.posSide = if ($side -eq "buy") { "long" } else { "short" }; Log "posMode=$posMode -> adding posSide='$($orderObj.posSide)' to order" "DEBUG" }
+    } elseif ($contractMode) { $orderObj.posSide = if ($side -eq "buy") { "long" } else { "short" }; Log "posMode unknown -> adding posSide for contract (conservative)" "DEBUG" }
+
+    $tpPct = $Cfg.take_profit_pct
+    $estimatedEntry = $price
+    $tpTriggerRaw = [decimal]($estimatedEntry * (1 + $tpPct))
+    if ($tick -ne $null -and $tick -gt 0) { $tpTrigger = RoundPriceToTick -price $tpTriggerRaw -tick $tick } else { $tpTrigger = [math]::Round($tpTriggerRaw, 8) }
+
+    $attachId = ("tp" + [guid]::NewGuid().ToString("N").Substring(0,16))
+    $attachObj = @{ attachAlgoClOrdId = $attachId; tpTriggerPx = ([string]$tpTrigger); tpTriggerPxType = $Cfg.tp_trigger_type; tpOrdPx = if ($Cfg.tp_exec_market) { "-1" } else { ([string]$tpTrigger) }; sz = ([string]$sz) }
+    $orderObj.attachAlgoOrds = @($attachObj)
+
+    $orderJson = $orderObj | ConvertTo-Json -Depth 10 -Compress
+    Log "Open order with attachAlgoOrds: $orderJson" "DEBUG"
+
+    if (-not $authOk) { Log "Auth check earlier failed. Will not place real orders. (Use -ForceLive to override if you know what you're doing)" "WARN"; continue }
+
+    $resp = Send-OkxRequest -Method "POST" -RequestPath "/api/v5/trade/order" -BodyJson $orderJson -Cfg $Cfg
+    if ($resp -and $resp.dryRun) {
+        Log "DRY RUN — order preview (attached TP shown in preview)" "WARN"
+        ($resp | ConvertTo-Json -Depth 6) | Write-Host
+    } elseif ($null -eq $resp) {
+        Log "Order failed or empty response" "ERROR"
+        continue
+    } else {
+        Log "Order response:" "OK"
+        ($resp | ConvertTo-Json -Depth 8) | Write-Host
+    }
+
+    Start-Sleep -Milliseconds 500
 }
 
 Log "Done." "OK"
