@@ -5,3 +5,4 @@ EMA added. Not implemented
 EMA condition added
 RSI added
 Loop added. Can trade long
+TP SL ATR based

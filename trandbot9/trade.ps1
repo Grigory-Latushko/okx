@@ -119,7 +119,6 @@ function Set-IsolatedLeverage {
     }
 }
 
-
 #################### INDICATORS ####################
 
 function Get-Candles($symbol, $limit, $period) {
@@ -199,6 +198,28 @@ function Get-RSI([double[]]$prices, [int]$period=14) {
     return $rsi
 }
 
+function Calculate-ATR($candles, $period) {
+    if (-not $candles -or $candles.Count -le $period) { return @() }
+    $trs = @()
+    for ($i = 1; $i -lt $candles.Count; $i++) {
+        $high = $candles[$i].High
+        $low = $candles[$i].Low
+        $prevClose = $candles[$i - 1].Close
+        $trs += [Math]::Max($high - $low, [Math]::Max([Math]::Abs($high - $prevClose), [Math]::Abs($low - $prevClose)))
+    }
+
+    if ($trs.Count -lt $period) { return @() }
+    $atr = @()
+    $initialSMA = ($trs[0..($period-1)] | Measure-Object -Sum).Sum / $period
+    $atr += $initialSMA
+    $k = 2.0 / ($period + 1)
+    for ($i = $period; $i -lt $trs.Count; $i++) {
+        $prev = $atr[-1]
+        $atr += ($trs[$i] * $k + $prev * (1 - $k))
+    }
+    return $atr
+}
+
 # ---------------- main ----------------
 
 $config = Get-Content $configPath -Raw | ConvertFrom-Json
@@ -233,6 +254,8 @@ if ($authOk) {
 
 $candle_period  = $config.candle_period
 $candle_limit   = $config.candle_limit
+$atrPeriod      = $config.atrPeriod
+$tp_atr_multiplier = $config.tp_atr_multiplier
 $higher_tf      = $config.higher_tf
 # $rsi6_min       = $config.rsi6_min
 # $rsi14_min      = $config.rsi14_min
@@ -250,7 +273,8 @@ function Run-Bot {
 
         ############ TRADE CONDITIONS CALCULATION ############
         $candles = Get-Candles $instId $candle_limit $candle_period
-        Write-Output "Получено $($candles.Count) свечей для $instId по таймфрейму $candle_period" "DEBUG"
+        Write-Output "Получено $($candles.Count) свечей для $instId по таймфрейму $candle_period"
+        if ($candles.Count -lt 1) { continue }
 
         $closes = $candles | ForEach-Object { $_.Close }
     #    Write-Output "Закрытия: $($closes -join ', ')" "DEBUG"
@@ -278,12 +302,13 @@ function Run-Bot {
             Write-Output "RSI30: $rsi30Curr"
 
         $higherCandles = Get-Candles $instId $candle_limit $higher_tf
-    #    if ($higherCandles.Count -lt ($config.trend_candles + 10)) { continue }
+        Write-Output "Получено $($higherCandles.Count) свечей для $instId по таймфрейму $higher_tf"
+       if ($higherCandles.Count -lt ($config.trend_candles + 10)) { continue }
         $higher_closes   = $higherCandles | ForEach-Object { $_.Close }
         $higher_rsi6Arr  = Get-RSI $higher_closes 6
         $higher_rsi14Arr = Get-RSI $higher_closes 14
         $higher_rsi30Arr = Get-RSI $higher_closes 30
-    #    if ($higher_rsi6Arr.Count -lt 1 -or $higher_rsi14Arr.Count -lt 1 -or $higher_rsi30Arr.Count -lt 1) { continue }
+       if ($higher_rsi6Arr.Count -lt 1 -or $higher_rsi14Arr.Count -lt 1 -or $higher_rsi30Arr.Count -lt 1) { continue }
 
         $higher_rsi6Curr  = $higher_rsi6Arr[-1]
             write-Output "Higher TF RSI6: $higher_rsi6Curr"
@@ -292,9 +317,16 @@ function Run-Bot {
         $higher_rsi30Curr = $higher_rsi30Arr[-1]
             write-Output "Higher TF RSI30: $higher_rsi30Curr"
 
+    # расчет ATR
+        $atrArr = Calculate-ATR $candles $atrPeriod
+        if ($atrArr.Count -eq 0) { continue }
+        $atr = $atrArr[-1]
+            Write-Output "ATR($atrPeriod): $atr"
+        $atr_pct = ($atr / $price) * 100
+            Write-Output "ATR%: $([math]::Round($atr_pct, 4)) %"
+
         $longSignal  = ($price -gt $lastEMA21) -and ($rsi6Curr -ge $rsi6_max) -and ($rsi14Curr -ge $rsi14_max) -and ($rsi30Curr -ge $rsi30_max) -and ($higher_rsi6Curr -ge $higher_rsi6_max) -and ($higher_rsi14Curr -ge $higher_rsi14_max) -and ($higher_rsi30Curr -ge $higher_rsi30_max)
             Write-Output "Long signal: $longSignal" 
-
 
         if (-not $longSignal) {
             Log "No long signal for $instId — skipping" "WARN"
@@ -373,9 +405,12 @@ function Run-Bot {
     } elseif ($contractMode) { $orderObj.posSide = if ($side -eq "buy") { "long" } else { "short" }; Log "posMode unknown -> adding posSide for contract (conservative)" "DEBUG" }
 
     # ---------------- calculate TP & SL ----------------
-    $tpPct = $config.take_profit_pct
-    $slPct = if ($config.PSObject.Properties.Name -contains "stop_loss_pct") { [decimal]$config.stop_loss_pct } else { 0.01 } # default 1% if not in config
-
+    # $tpPct = $config.take_profit_pct
+    $tpPct = $atr_pct * $tp_atr_multiplier / 100
+        write-Output "Take Profit % based on ATR: $([math]::Round($tpPct * 100, 4)) %"
+    # $slPct = if ($config.PSObject.Properties.Name -contains "stop_loss_pct") { [decimal]$config.stop_loss_pct } else { 0.01 } # default 1% if not in config
+    $slPct = $atr_pct * $sl_atr_multiplier / 100
+        write-Output "Stop Loss % based on ATR: $([math]::Round($slPct * 100, 4)) %"
     $estimatedEntry = $price
 
     # TP
