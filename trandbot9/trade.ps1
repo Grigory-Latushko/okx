@@ -4,7 +4,17 @@ param(
   [switch]$DebugMode
 )
 
+if (-not $global:candleCache) { $global:candleCache = @{} }
+
 # ---------------- helpers ----------------
+function Get-Timestamp { return [int][double]::Parse((Get-Date -UFormat %s)) }
+
+function Format-Time { return (Get-Date -Format "yyyy-MM-dd HH:mm:ss") }
+
+function LogConsole($msg, $type = "INFO") {
+    $ts = Format-Time
+    Write-Host "[$ts][$type] $msg"
+}
 function Mask { param([string]$s) if (-not $s) { return "" } if ($s.Length -le 8) { return $s.Substring(0,2) + "..." } return $s.Substring(0,4) + "..." + $s.Substring($s.Length-4,4) } 
 function Log { param([string]$msg, [string]$level = "INFO") switch ($level.ToUpper()) { "INFO"  { Write-Host "[INFO ] $msg" -ForegroundColor Gray } "OK"    { Write-Host "[ OK  ] $msg" -ForegroundColor Green } "WARN"  { Write-Host "[WARN ] $msg" -ForegroundColor Yellow } "ERROR" { Write-Host "[ERR  ] $msg" -ForegroundColor Red } "DEBUG" { if ($DebugMode) { Write-Host "[DBG  ] $msg" -ForegroundColor Cyan } } } }
 function Get-NowTimestamp { (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.fffZ") }
@@ -20,30 +30,29 @@ function Sign-OkxRequest {
   if ($DebugMode) { Log "prehash: $prehash" "DEBUG"; Log "signature: $sig" "DEBUG" }
   return $sig
 }
-
 function Send-OkxRequest {
-  param([string]$Method, [string]$RequestPath, [string]$BodyJson, $Cfg)
+  param([string]$Method, [string]$RequestPath, [string]$BodyJson, $config)
 
   $ts = Get-NowTimestamp
-  $sig = Sign-OkxRequest -Secret $Cfg.secret_key -Timestamp $ts -Method $Method.ToUpper() -RequestPath $RequestPath -Body $BodyJson
+  $sig = Sign-OkxRequest -Secret $config.secret_key -Timestamp $ts -Method $Method.ToUpper() -RequestPath $RequestPath -Body $BodyJson
 
   $headers = @{
-    "OK-ACCESS-KEY"        = $Cfg.api_key
+    "OK-ACCESS-KEY"        = $config.api_key
     "OK-ACCESS-SIGN"       = $sig
     "OK-ACCESS-TIMESTAMP"  = $ts
-    "OK-ACCESS-PASSPHRASE" = $Cfg.passphrase
+    "OK-ACCESS-PASSPHRASE" = $config.passphrase
     "Content-Type"         = "application/json"
   }
-  if ($Cfg.simulated -ne $null) { $headers["x-simulated-trading"] = if ($Cfg.simulated) { "1" } else { "0" } }
+  if ($config.simulated -ne $null) { $headers["x-simulated-trading"] = if ($config.simulated) { "1" } else { "0" } }
 
-  $url = $Cfg.baseUrl.TrimEnd('/') + $RequestPath
+  $url = $config.baseUrl.TrimEnd('/') + $RequestPath
   $maskedHeaders = @{}; foreach ($k in $headers.Keys) { $v = $headers[$k]; if ($k -match "KEY|SIGN|PASSPHRASE") { $maskedHeaders[$k] = Mask($v) } else { $maskedHeaders[$k] = $v } }
 
   Log "Request: $Method $url" "DEBUG"
   Log "Body: $BodyJson" "DEBUG"
   Log "Headers: $($maskedHeaders | ConvertTo-Json -Compress)" "DEBUG"
 
-  if ($Cfg.dryRun -and -not $ForceLive) { Log "DryRun enabled — запрос не отправлен" "WARN"; return @{ dryRun = $true; method = $Method; url = $url; headers = $maskedHeaders; body = $BodyJson } }
+  if ($config.dryRun -and -not $ForceLive) { Log "DryRun enabled — запрос не отправлен" "WARN"; return @{ dryRun = $true; method = $Method; url = $url; headers = $maskedHeaders; body = $BodyJson } }
 
   try {
     if ($Method.ToUpper() -eq "GET") { $resp = Invoke-RestMethod -Method Get -Uri $url -Headers $headers -ErrorAction Stop } else { $resp = Invoke-RestMethod -Method Post -Uri $url -Headers $headers -Body $BodyJson -ErrorAction Stop }
@@ -57,65 +66,119 @@ function Send-OkxRequest {
     return $null
   }
 }
-function Get-Price { param($instId, $Cfg) Log "Получаем цену для $instId" "DEBUG"; $resp = Send-OkxRequest -Method "GET" -RequestPath "/api/v5/market/ticker?instId=$($instId)" -BodyJson "" -Cfg $Cfg; if ($resp -and $resp.data -and $resp.data.Count -ge 1) { $p = [decimal]$resp.data[0].last; Log "Цена $instId = $p" "OK"; return $p } Log "Не удалось получить цену $instId" "WARN"; return $null }
-
-function Get-InstrumentInfo { param($instId, $Cfg) Log "Получаем информацию об инструменте $instId" "DEBUG"; $resp = Send-OkxRequest -Method "GET" -RequestPath "/api/v5/public/instruments?instType=SWAP&instId=$($instId)" -BodyJson "" -Cfg $Cfg; if ($resp -and $resp.data -and $resp.data.Count -ge 1) { return $resp.data[0] } return $null }
+function Get-Price { param($instId, $config) Log "Получаем цену для $instId" "DEBUG"; $resp = Send-OkxRequest -Method "GET" -RequestPath "/api/v5/market/ticker?instId=$($instId)" -BodyJson "" -config $config; if ($resp -and $resp.data -and $resp.data.Count -ge 1) { $p = [decimal]$resp.data[0].last; Log "Цена $instId = $p" "OK"; return $p } Log "Не удалось получить цену $instId" "WARN"; return $null }
+function Get-InstrumentInfo { param($instId, $config) Log "Получаем информацию об инструменте $instId" "DEBUG"; $resp = Send-OkxRequest -Method "GET" -RequestPath "/api/v5/public/instruments?instType=SWAP&instId=$($instId)" -BodyJson "" -config $config; if ($resp -and $resp.data -and $resp.data.Count -ge 1) { return $resp.data[0] } return $null }
 
 function Round-ToStep { param($value, $step) if ($step -eq 0 -or $null -eq $step) { return [math]::Round($value, 8) } $quotient = [math]::Floor(($value / $step) + 0.0000000001); $rounded = $quotient * $step; return [decimal]$([math]::Round([double]$rounded, 8)) }
 
 function RoundPriceToTick { param($price, $tick) if ($tick -eq 0 -or $null -eq $tick) { return [math]::Round($price, 8) } $q = [math]::Round($price / $tick, 8); $r = [math]::Round($q) * $tick; return [decimal]$([math]::Round([double]$r, 8)) }
 
-function Get-AccountConfig { param($Cfg) Log "Получаем конфиг аккаунта (/api/v5/account/config)" "DEBUG"; $resp = Send-OkxRequest -Method "GET" -RequestPath "/api/v5/account/config" -BodyJson "" -Cfg $Cfg; if ($resp -and $resp.data -and $resp.data.Count -ge 1) { $d = $resp.data[0]; if ($d.psMode) { return $d.psMode }; if ($d.posMode) { return $d.posMode }; if ($d.positionMode) { return $d.positionMode }; return $resp.data }; return $null }
+function Get-AccountConfig { param($config) Log "Получаем конфиг аккаунта (/api/v5/account/config)" "DEBUG"; $resp = Send-OkxRequest -Method "GET" -RequestPath "/api/v5/account/config" -BodyJson "" -config $config; if ($resp -and $resp.data -and $resp.data.Count -ge 1) { $d = $resp.data[0]; if ($d.psMode) { return $d.psMode }; if ($d.posMode) { return $d.posMode }; if ($d.positionMode) { return $d.positionMode }; return $resp.data }; return $null }
 
 function Set-Leverage {
-    param($instId, $lever, $mgnMode, $Cfg)
+    param($instId, $lever, $mgnMode, $config)
     $bodyObj = @{ instId = $instId; lever = ([string]$lever); mgnMode = $mgnMode }
     $body = $bodyObj | ConvertTo-Json -Compress
     Log "Sending set-leverage request: $body" "DEBUG"
-    $resp = Send-OkxRequest -Method "POST" -RequestPath "/api/v5/account/set-leverage" -BodyJson $body -Cfg $Cfg
+    $resp = Send-OkxRequest -Method "POST" -RequestPath "/api/v5/account/set-leverage" -BodyJson $body -config $config
     if ($resp) { Log "Set-Leverage response: $(ConvertTo-Json $resp -Depth 5)" "DEBUG" }
     else { Log "Set-Leverage request returned null" "ERROR" }
     return $resp
 }
 
-# ---------------- main ----------------
-if (-not (Test-Path $ConfigPath)) { Log "Config file not found: $ConfigPath" "ERROR"; exit 1 }
-$cfgRaw = Get-Content $ConfigPath -Raw
-try { $cfg = $cfgRaw | ConvertFrom-Json } catch { Log "Invalid JSON in config: $_" "ERROR"; exit 1 }
+#################### INDICATORS ####################
 
-function GetCfgVal($obj, $names, $default) { foreach ($n in $names) { if ($obj.PSObject.Properties.Name -contains $n) { return $obj.$n } } return $default }
+function Get-Candles($symbol, $limit, $period) {
+    $cacheKey = "$symbol-$period-$limit"
+    
+    # Проверяем, есть ли в кэше и свежие ли данные
+    if ($global:candleCache.ContainsKey($cacheKey)) {
+        $cached = $global:candleCache[$cacheKey]
+        $age = Get-Timestamp - $cached.Timestamp
+        if ($age -lt 60) {  # если кэш моложе 60 секунд
+            return $cached.Candles
+        }
+    }
 
-$simFlag = GetCfgVal $cfg @("simulated","sim","demo","simulated_trading") $null
-$simBool = if ($null -ne $simFlag) { [bool]$simFlag } else { $null }
+    # Получаем новые свечи с API
+    try {
+        $url = "https://www.okx.com/api/v5/market/candles?instId=$symbol&bar=$period&limit=$limit"
+        $res = Invoke-RestMethod -Uri $url -Method Get
+        if (-not $res.data) { return @() }
 
-$Cfg = [PSCustomObject]@{
-  api_key           = GetCfgVal $cfg @("api_key","apiKey","apikey") $null
-  secret_key        = GetCfgVal $cfg @("secret_key","secretKey","secret") $null
-  passphrase        = GetCfgVal $cfg @("passphrase","passPhrase") $null
-  position_size_usd = [decimal](GetCfgVal $cfg @("position_size_usd","positionSizeUsd","position_size") 1)
-  leverage          = [decimal](GetCfgVal $cfg @("leverage","lev") 1)
-  set_leverage      = [bool](GetCfgVal $cfg @("set_leverage","setLeverage") $false)
-  mgnMode           = GetCfgVal $cfg @("mgnMode","mgn_mode","margin_mode") "cross"
-  dryRun            = [bool](GetCfgVal $cfg @("dryRun","dry_run","dry_run") $true)
-  baseUrl           = GetCfgVal $cfg @("baseUrl","base_url","base") "https://www.okx.com"
-  instruments       = GetCfgVal $cfg @("instruments","instrument_list","insts") @()
-  force_min_size    = [bool](GetCfgVal $cfg @("force_min_size","forceMinSize") $false)
-  force_threshold_factor = [decimal](GetCfgVal $cfg @("force_threshold_factor","forceThresholdFactor") 3)
-  simulated         = $simBool
-  take_profit_pct   = [decimal](GetCfgVal $cfg @("take_profit_pct","tp_pct") 0.01)
-  tp_trigger_type   = GetCfgVal $cfg @("tp_trigger_type","tpTriggerType") "last"
-  tp_exec_market    = [bool](GetCfgVal $cfg @("tp_exec_market","tpMarket") $true)
+        $candles = $res.data | ForEach-Object {
+            [PSCustomObject]@{
+                Timestamp = [long]($_[0])/1000
+                Open      = [double]$_[1]
+                High      = [double]$_[2]
+                Low       = [double]$_[3]
+                Close     = [double]$_[4]
+                Volume    = [double]$_[5]
+            }
+        } | Sort-Object Timestamp
+
+        # Сохраняем в кэш
+        $global:candleCache[$cacheKey] = @{
+            Candles = $candles
+            Timestamp = Get-Timestamp
+        }
+
+        return $candles
+    } catch {
+        LogConsole "Ошибка получения свечей для ${symbol}: $($_)" "ERROR"
+        return @()
+    }
+}
+function Calculate-EMA($prices, $period) {
+    if ($prices.Count -lt $period) { return @() }
+    $k = 2 / ($period + 1)
+    $ema = @($prices[0])
+    for ($i = 1; $i -lt $prices.Count; $i++) {
+        $ema += $prices[$i] * $k + $ema[$i-1] * (1 - $k)
+    }
+    return $ema
 }
 
-$cfgMasked = @{ api_key = Mask($Cfg.api_key); secret_key = Mask($Cfg.secret_key); passphrase = Mask($Cfg.passphrase); position_size_usd = $Cfg.position_size_usd; leverage = $Cfg.leverage; baseUrl = $Cfg.baseUrl; instruments = $Cfg.instruments; take_profit_pct = $Cfg.take_profit_pct; tp_exec_market = $Cfg.tp_exec_market; dryRun = $Cfg.dryRun }
-Log "Loaded config: $($cfgMasked | ConvertTo-Json -Depth 5)" "DEBUG"
+# ---------------- main ----------------
+# if (-not (Test-Path $ConfigPath)) { Log "Config file not found: $ConfigPath" "ERROR"; exit 1 }
+# $configRaw = Get-Content $ConfigPath -Raw
+# try { $config = $configRaw | ConvertFrom-Json } catch { Log "Invalid JSON in config: $_" "ERROR"; exit 1 }
 
-if (-not $Cfg.api_key -or -not $Cfg.secret_key -or -not $Cfg.passphrase) { Log "api_key / secret_key / passphrase must be provided in config file" "ERROR"; exit 1 }
-if (-not $Cfg.instruments -or $Cfg.instruments.Count -eq 0) { Log "No instruments provided in config -> 'instruments' array" "ERROR"; exit 1 }
+function GetconfigVal($obj, $names, $default) { foreach ($n in $names) { if ($obj.PSObject.Properties.Name -contains $n) { return $obj.$n } } return $default }
+
+$simFlag = GetconfigVal $config @("simulated","sim","demo","simulated_trading") $null
+$simBool = if ($null -ne $simFlag) { [bool]$simFlag } else { $null }
+
+# $config = [PSCustomObject]@{
+#   api_key           = GetconfigVal $config @("api_key","apiKey","apikey") $null
+#   secret_key        = GetconfigVal $config @("secret_key","secretKey","secret") $null
+#   passphrase        = GetconfigVal $config @("passphrase","passPhrase") $null
+#   position_size_usd = [decimal](GetconfigVal $config @("position_size_usd","positionSizeUsd","position_size") 1)
+#   leverage          = [decimal](GetconfigVal $config @("leverage","lev") 1)
+#   set_leverage      = [bool](GetconfigVal $config @("set_leverage","setLeverage") $false)
+#   mgnMode           = GetconfigVal $config @("mgnMode","mgn_mode","margin_mode") "cross"
+#   dryRun            = [bool](GetconfigVal $config @("dryRun","dry_run","dry_run") $true)
+#   baseUrl           = GetconfigVal $config @("baseUrl","base_url","base") "https://www.okx.com"
+#   instruments       = GetconfigVal $config @("instruments","instrument_list","insts") @()
+#   force_min_size    = [bool](GetconfigVal $config @("force_min_size","forceMinSize") $false)
+#   force_threshold_factor = [decimal](GetconfigVal $config @("force_threshold_factor","forceThresholdFactor") 3)
+#   simulated         = $simBool
+#   take_profit_pct   = [decimal](GetconfigVal $config @("take_profit_pct","tp_pct") 0.01)
+#   tp_trigger_type   = GetconfigVal $config @("tp_trigger_type","tpTriggerType") "last"
+#   tp_exec_market    = [bool](GetconfigVal $config @("tp_exec_market","tpMarket") $true)
+# }
+
+$config = Get-Content $configPath -Raw | ConvertFrom-Json
+
+$configMasked = @{ api_key = Mask($config.api_key); secret_key = Mask($config.secret_key); passphrase = Mask($config.passphrase); position_size_usd = $config.position_size_usd; leverage = $config.leverage; baseUrl = $config.baseUrl; instruments = $config.instruments; take_profit_pct = $config.take_profit_pct; tp_exec_market = $config.tp_exec_market; dryRun = $config.dryRun }
+Log "Loaded config: $($configMasked | ConvertTo-Json -Depth 5)" "DEBUG"
+
+if (-not $config.api_key -or -not $config.secret_key -or -not $config.passphrase) { Log "api_key / secret_key / passphrase must be provided in config file" "ERROR"; exit 1 }
+if (-not $config.instruments -or $config.instruments.Count -eq 0) { Log "No instruments provided in config -> 'instruments' array" "ERROR"; exit 1 }
 
 # ---------------- auth & time ----------------
 try {
-    $timeResp = Send-OkxRequest -Method "GET" -RequestPath "/api/v5/public/time" -BodyJson "" -Cfg $Cfg
+    $timeResp = Send-OkxRequest -Method "GET" -RequestPath "/api/v5/public/time" -BodyJson "" -config $config
     if ($timeResp -and $timeResp.data -and $timeResp.data.Count -ge 1) {
         $serverIso = $timeResp.data[0].iso
         $serverTs = try { [datetime]::ParseExact($serverIso, "yyyy-MM-ddTHH:mm:ss.fffZ", $null).ToUniversalTime() } catch { [datetime]::Parse($serverIso).ToUniversalTime() }
@@ -126,22 +189,42 @@ try {
 } catch {}
 
 $authOk = $true
-$balResp = Send-OkxRequest -Method "GET" -RequestPath "/api/v5/account/balance" -BodyJson "" -Cfg $Cfg
+$balResp = Send-OkxRequest -Method "GET" -RequestPath "/api/v5/account/balance" -BodyJson "" -config $config
 if ($null -eq $balResp) { Log "Warning: failed to call private endpoint /account/balance. Check API key permissions, IP whitelist, or environment (demo vs live)." "WARN"; $authOk = $false } else { Log "/account/balance OK (auth check passed)" "DEBUG" }
 
 $posMode = $null
 if ($authOk) {
-    $cfgResp = Get-AccountConfig -Cfg $Cfg
-    if ($cfgResp) { Log "Account config posMode: $cfgResp" "DEBUG"; $posMode = $cfgResp } else { Log "Could not fetch account config (posMode). posMode unknown." "DEBUG" }
+    $configResp = Get-AccountConfig -config $config
+    if ($configResp) { Log "Account config posMode: $configResp" "DEBUG"; $posMode = $configResp } else { Log "Could not fetch account config (posMode). posMode unknown." "DEBUG" }
 }
 
+$candle_period  = $config.candle_period
+$candle_limit   = $config.candle_limit
+
 # ---------------- loop instruments ----------------
-foreach ($instId in $Cfg.instruments) {
+foreach ($instId in $config.instruments) {
     Write-Host "`n=== Processing $instId ===" -ForegroundColor White
 
+    ############ TRADE CONDITIONS CALCULATION ############
+    $candles = Get-Candles $instId $candle_limit $candle_period
+    Write-Output "Получено $($candles.Count) свечей для $instId по таймфрейму $candle_period" "DEBUG"
+
+    $closes = $candles | ForEach-Object { $_.Close }
+#    Write-Output "Закрытия: $($closes -join ', ')" "DEBUG"
+    $ema21 = Calculate-EMA $closes 21
+#    Write-Output "EMA21: $($ema21 -join ', ')" "DEBUG"
+    $lastEMA21     = $ema21[-1]
+    Write-Output "Последняя EMA21: $lastEMA21" 
+    $price = Get-Price -instId $instId -config $config
+    Write-Output "Текущая цена: $price" 
+    $longSignal  = ($price -gt $lastEMA21)
+    Write-Output "Long signal: $longSignal" 
+
+
+    ##########################################################
     # проверка уже открытых позиций
     if ($authOk) {
-        $positionsResp = Send-OkxRequest -Method "GET" -RequestPath "/api/v5/account/positions?instId=$instId" -BodyJson "" -Cfg $Cfg
+        $positionsResp = Send-OkxRequest -Method "GET" -RequestPath "/api/v5/account/positions?instId=$instId" -BodyJson "" -config $config
         if ($positionsResp -and $positionsResp.data -and $positionsResp.data.Count -gt 0) {
             $openPos = $positionsResp.data | Where-Object { $_.pos -ne 0 }
             if ($openPos.Count -gt 0) {
@@ -150,11 +233,10 @@ foreach ($instId in $Cfg.instruments) {
             }
         }
     }
-
-    $price = Get-Price -instId $instId -Cfg $Cfg
+    
     if ($null -eq $price) { Log "Skipping $instId — price not available" "WARN"; continue }
 
-    $info = Get-InstrumentInfo -instId $instId -Cfg $Cfg
+    $info = Get-InstrumentInfo -instId $instId -config $config
     $contractMode = $false; $ctVal = $null; $step = $null; $tick = $null
     if ($info) {
         if ($info.ctVal) { $ctVal = [decimal]$info.ctVal; $contractMode = $true }
@@ -163,7 +245,7 @@ foreach ($instId in $Cfg.instruments) {
         Log "Instrument meta: ctVal=$ctVal, step/minSz=$step, tickSz=$tick" "DEBUG"
     }
 
-    $notional_desired = [decimal]($Cfg.position_size_usd * $Cfg.leverage)
+    $notional_desired = [decimal]($config.position_size_usd * $config.leverage)
     Log "Desired notional = $notional_desired USD" "DEBUG"
 
     if ($contractMode -and $null -ne $ctVal -and $ctVal -gt 0) {
@@ -179,9 +261,9 @@ foreach ($instId in $Cfg.instruments) {
     }
 
     if ($sz -le 0) {
-        if ($Cfg.force_min_size -and $step -gt 0) {
+        if ($config.force_min_size -and $step -gt 0) {
             if ($contractMode -and $null -ne $ctVal) { $notional_if_forced = [math]::Round(($step * $ctVal * $price), 8) } else { $notional_if_forced = [math]::Round(($step * $price), 8) }
-            $threshold = $Cfg.force_threshold_factor
+            $threshold = $config.force_threshold_factor
             if ($notional_if_forced -gt ($notional_desired * $threshold)) { Log "Forcing minimal step would create notional $notional_if_forced USD > $threshold × desired. Skipping" "WARN"; continue }
             Log "rawSize < step; forcing sz = step ($step). forced notional = $notional_if_forced USD" "WARN"
             $sz = $step
@@ -192,19 +274,19 @@ foreach ($instId in $Cfg.instruments) {
     Log "Final: sz = $sz (step $step). notional_actual = $notional_actual USD" "INFO"
 
     # ---------------- apply leverage ----------------
-    if ($Cfg.set_leverage -and $Cfg.leverage -gt 1) {
+    if ($config.set_leverage -and $config.leverage -gt 1) {
         if (-not $authOk) {
             Log "Skipping set-leverage because earlier auth check failed" "WARN"
         } else {
-            Log "Applying leverage $($Cfg.leverage) for $instId" "INFO"
-            $setResp = Set-Leverage -instId $instId -lever $Cfg.leverage -mgnMode $Cfg.mgnMode -Cfg $Cfg
+            Log "Applying leverage $($config.leverage) for $instId" "INFO"
+            $setResp = Set-Leverage -instId $instId -lever $config.leverage -mgnMode $config.mgnMode -config $config
             if ($null -eq $setResp) { Log "Failed to set leverage; skipping" "ERROR" } else { Log "Set-Leverage response: $(ConvertTo-Json $setResp -Depth 5)" "INFO" }
         }
     }
 
 # ---------------- place market order + attach TP/SL ----------------
 $side = "buy"
-$orderObj = @{ instId = $instId; tdMode = $Cfg.mgnMode; side = $side; ordType = "market"; sz = ([string]$sz) }
+$orderObj = @{ instId = $instId; tdMode = $config.mgnMode; side = $side; ordType = "market"; sz = ([string]$sz) }
 
 if ($contractMode -and $null -ne $posMode) {
     $pm = $posMode.ToString().ToLower()
@@ -212,8 +294,8 @@ if ($contractMode -and $null -ne $posMode) {
 } elseif ($contractMode) { $orderObj.posSide = if ($side -eq "buy") { "long" } else { "short" }; Log "posMode unknown -> adding posSide for contract (conservative)" "DEBUG" }
 
 # ---------------- calculate TP & SL ----------------
-$tpPct = $Cfg.take_profit_pct
-$slPct = if ($Cfg.PSObject.Properties.Name -contains "stop_loss_pct") { [decimal]$Cfg.stop_loss_pct } else { 0.01 } # default 1% if not in config
+$tpPct = $config.take_profit_pct
+$slPct = if ($config.PSObject.Properties.Name -contains "stop_loss_pct") { [decimal]$config.stop_loss_pct } else { 0.01 } # default 1% if not in config
 
 $estimatedEntry = $price
 
@@ -229,11 +311,11 @@ $attachId = "tpsl" + [guid]::NewGuid().ToString("N").Substring(0,12)
 $attachObj = @{
     attachAlgoClOrdId = $attachId
     tpTriggerPx        = ([string]$tpTrigger)
-    tpTriggerPxType    = $Cfg.tp_trigger_type
-    tpOrdPx            = if ($Cfg.tp_exec_market) { "-1" } else { ([string]$tpTrigger) }
+    tpTriggerPxType    = $config.tp_trigger_type
+    tpOrdPx            = if ($config.tp_exec_market) { "-1" } else { ([string]$tpTrigger) }
     slTriggerPx        = ([string]$slTrigger)
-    slTriggerPxType    = $Cfg.tp_trigger_type
-    slOrdPx            = if ($Cfg.tp_exec_market) { "-1" } else { ([string]$slTrigger) }
+    slTriggerPxType    = $config.tp_trigger_type
+    slOrdPx            = if ($config.tp_exec_market) { "-1" } else { ([string]$slTrigger) }
     sz                 = ([string]$sz)
 }
 
@@ -244,7 +326,8 @@ Log "Open order with attachAlgoOrds (TP+SL): $orderJson" "DEBUG"
 
 if (-not $authOk) { Log "Auth check earlier failed. Will not place real orders. (Use -ForceLive to override if you know what you're doing)" "WARN"; continue }
 
-$resp = Send-OkxRequest -Method "POST" -RequestPath "/api/v5/trade/order" -BodyJson $orderJson -Cfg $Cfg
+#-------- Сделка --------
+$resp = Send-OkxRequest -Method "POST" -RequestPath "/api/v5/trade/order" -BodyJson $orderJson -config $config
 if ($resp -and $resp.dryRun) {
     Log "DRY RUN — order preview (attached TP+SL shown in preview)" "WARN"
     ($resp | ConvertTo-Json -Depth 6) | Write-Host
