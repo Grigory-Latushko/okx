@@ -173,6 +173,32 @@ function Calculate-EMA($prices, $period) {
     return $ema
 }
 
+function Get-RSI([double[]]$prices, [int]$period=14) {
+    if (-not $prices -or $prices.Count -lt ($period + 1)) { return @() }
+    $gains = New-Object System.Collections.Generic.List[double]
+    $losses = New-Object System.Collections.Generic.List[double]
+    for ($i = 1; $i -lt $prices.Count; $i++) {
+        $change = $prices[$i] - $prices[$i-1]
+        if ($change -gt 0) { $gains.Add($change); $losses.Add(0.0) } else { $gains.Add(0.0); $losses.Add([Math]::Abs($change)) }
+    }
+    if ($gains.Count -lt $period) { return @() }
+
+    $avgGain = ($gains[0..($period-1)] | Measure-Object -Sum).Sum / $period
+    $avgLoss = ($losses[0..($period-1)] | Measure-Object -Sum).Sum / $period
+
+    $rsi = New-Object System.Collections.Generic.List[double]
+    $rs = if ($avgLoss -ne 0) { $avgGain / $avgLoss } else { [double]::PositiveInfinity }
+    $rsi.Add([Math]::Round(100 - (100 / (1 + $rs)), 2))
+
+    for ($i = $period; $i -lt $gains.Count; $i++) {
+        $avgGain = (($avgGain * ($period - 1)) + $gains[$i]) / $period
+        $avgLoss = (($avgLoss * ($period - 1)) + $losses[$i]) / $period
+        $rs = if ($avgLoss -ne 0) { $avgGain / $avgLoss } else { [double]::PositiveInfinity }
+        $rsi.Add([Math]::Round(100 - (100 / (1 + $rs)), 2))
+    }
+    return $rsi
+}
+
 # ---------------- main ----------------
 # if (-not (Test-Path $ConfigPath)) { Log "Config file not found: $ConfigPath" "ERROR"; exit 1 }
 # $configRaw = Get-Content $ConfigPath -Raw
@@ -234,6 +260,14 @@ if ($authOk) {
 
 $candle_period  = $config.candle_period
 $candle_limit   = $config.candle_limit
+$higher_tf      = $config.higher_tf
+# $rsi6_min       = $config.rsi6_min
+# $rsi14_min      = $config.rsi14_min
+# $rsi30_min      = $config.rsi30_min
+$rsi6_max       = $config.rsi6_max
+$rsi14_max      = $config.rsi14_max
+$rsi30_max      = $config.rsi30_max
+
 
 # ---------------- loop instruments ----------------
 foreach ($instId in $config.instruments) {
@@ -245,14 +279,47 @@ foreach ($instId in $config.instruments) {
 
     $closes = $candles | ForEach-Object { $_.Close }
 #    Write-Output "Закрытия: $($closes -join ', ')" "DEBUG"
+
+# расчет EMA21
     $ema21 = Calculate-EMA $closes 21
 #    Write-Output "EMA21: $($ema21 -join ', ')" "DEBUG"
     $lastEMA21     = $ema21[-1]
-    Write-Output "Последняя EMA21: $lastEMA21" 
+        Write-Output "Последняя EMA21: $lastEMA21" 
     $price = Get-Price -instId $instId -config $config
-    Write-Output "Текущая цена: $price" 
-    $longSignal  = ($price -gt $lastEMA21)
-    Write-Output "Long signal: $longSignal" 
+        Write-Output "Текущая цена: $price" 
+
+        
+# расчет RSI6, RSI14, RSI30
+    $rsi6Arr  = Get-RSI $closes 6
+    $rsi14Arr = Get-RSI $closes 14
+    $rsi30Arr = Get-RSI $closes 30
+    if ($rsi6Arr.Count -lt 1 -or $rsi14Arr.Count -lt 1 -or $rsi30Arr.Count -lt 1) { continue }
+
+    $rsi6Curr  = $rsi6Arr[-1]
+        Write-Output "RSI6: $rsi6Curr" 
+    $rsi14Curr = $rsi14Arr[-1]
+        Write-Output "RSI14: $rsi14Curr"
+    $rsi30Curr = $rsi30Arr[-1]
+        Write-Output "RSI30: $rsi30Curr"
+
+    $higherCandles = Get-Candles $instId $candle_limit $higher_tf
+#    if ($higherCandles.Count -lt ($config.trend_candles + 10)) { continue }
+    $higher_closes   = $higherCandles | ForEach-Object { $_.Close }
+    $higher_rsi6Arr  = Get-RSI $higher_closes 6
+    $higher_rsi14Arr = Get-RSI $higher_closes 14
+    $higher_rsi30Arr = Get-RSI $higher_closes 30
+#    if ($higher_rsi6Arr.Count -lt 1 -or $higher_rsi14Arr.Count -lt 1 -or $higher_rsi30Arr.Count -lt 1) { continue }
+
+    $higher_rsi6Curr  = $higher_rsi6Arr[-1]
+        write-Output "Higher TF RSI6: $higher_rsi6Curr"
+    $higher_rsi14Curr = $higher_rsi14Arr[-1]
+        write-Output "Higher TF RSI14: $higher_rsi14Curr"
+    $higher_rsi30Curr = $higher_rsi30Arr[-1]
+        write-Output "Higher TF RSI30: $higher_rsi30Curr"
+
+    $longSignal  = ($price -gt $lastEMA21) -and ($rsi6Curr -ge $config.rsi6_max) -and ($rsi14Curr -ge $config.rsi14_max) -and ($rsi30Curr -ge $config.rsi30_max) -and ($higher_rsi6Curr -ge $config.rsi6_max) -and ($higher_rsi14Curr -ge $config.rsi14_max) -and ($higher_rsi30Curr -ge $config.rsi30_max)
+        Write-Output "Long signal: $longSignal" 
+
 
     if (-not $longSignal) {
         Log "No long signal for $instId — skipping" "WARN"
