@@ -3,7 +3,7 @@
   "secret_key": "42BF8BBF0F28F7D3E65DC8B6409188E8",
   "passphrase": "Aa111111!",
   "instruments": [
-    "ETH-USDT-SWAP"
+    "ETH-USDT-SWAP","SOL-USDT-SWAP"
   ],
   "position_size_usd": 3,
   "leverage": 10,
@@ -14,5 +14,6 @@
   "dryRun": false,
   "simulated": true,
   "baseUrl": "https://www.okx.com",
-  "take_profit_pct": 0.0055
+  "take_profit_pct": 0.02,
+  "stop_loss_pct": 0.01
 }
