@@ -7,11 +7,12 @@
   ],
   "position_size_usd": 3,
   "leverage": 10,
-  "set_leverage": false,
+  "set_leverage": true,
   "mgnMode": "cross",
   "force_min_size": true,
   "force_threshold_factor": 3,
   "dryRun": false,
   "simulated": true,
-  "baseUrl": "https://www.okx.com"
+  "baseUrl": "https://www.okx.com",
+  "take_profit_pct": 0.0055
 }
