@@ -75,16 +75,50 @@ function RoundPriceToTick { param($price, $tick) if ($tick -eq 0 -or $null -eq $
 
 function Get-AccountConfig { param($config) Log "Получаем конфиг аккаунта (/api/v5/account/config)" "DEBUG"; $resp = Send-OkxRequest -Method "GET" -RequestPath "/api/v5/account/config" -BodyJson "" -config $config; if ($resp -and $resp.data -and $resp.data.Count -ge 1) { $d = $resp.data[0]; if ($d.psMode) { return $d.psMode }; if ($d.posMode) { return $d.posMode }; if ($d.positionMode) { return $d.positionMode }; return $resp.data }; return $null }
 
-function Set-Leverage {
-    param($instId, $lever, $mgnMode, $config)
-    $bodyObj = @{ instId = $instId; lever = ([string]$lever); mgnMode = $mgnMode }
+# ---------------- apply leverage (isolated) ----------------
+function Set-IsolatedLeverage {
+    param($instId, $lever, $config, $posSide="long")
+
+    # Устанавливаем isolated
+    $mgnMode = "isolated"
+    
+    # Проверяем минимальный размер позиции для leverage
+    $info = Get-InstrumentInfo -instId $instId -config $config
+    $price = Get-Price -instId $instId -config $config
+    if (-not $info -or -not $price) { 
+        Log "Cannot get instrument info or price for $instId" "ERROR"; return $null 
+    }
+
+    $ctVal = if ($info.ctVal) { [decimal]$info.ctVal } else { 1 }
+    $minSz = if ($info.minSz) { [decimal]$info.minSz } else { 0.01 }
+    $notional_desired = [decimal]($config.position_size_usd * $lever)
+    $sz = [math]::Round($notional_desired / ($ctVal * $price), 8)
+    
+    if ($sz -lt $minSz) {
+        Log "Position size $sz < minSz $minSz for isolated leverage. Adjusting to minSz." "WARN"
+        $sz = $minSz
+    }
+
+    # Подготовка тела запроса
+    $bodyObj = @{
+        instId = $instId
+        lever  = ([string]$lever)
+        mgnMode = $mgnMode
+        posSide = $posSide
+    }
     $body = $bodyObj | ConvertTo-Json -Compress
-    Log "Sending set-leverage request: $body" "DEBUG"
+
+    # Отправка запроса
     $resp = Send-OkxRequest -Method "POST" -RequestPath "/api/v5/account/set-leverage" -BodyJson $body -config $config
-    if ($resp) { Log "Set-Leverage response: $(ConvertTo-Json $resp -Depth 5)" "DEBUG" }
-    else { Log "Set-Leverage request returned null" "ERROR" }
-    return $resp
+    if ($resp -and $resp.code -eq "0") {
+        Log "Set-Isolated-Leverage OK: $($resp.data | ConvertTo-Json -Depth 5)" "OK"
+        return $sz
+    } else {
+        Log "Failed to set isolated leverage for $instId" "ERROR"
+        return $null
+    }
 }
+
 
 #################### INDICATORS ####################
 
@@ -220,7 +254,10 @@ foreach ($instId in $config.instruments) {
     $longSignal  = ($price -gt $lastEMA21)
     Write-Output "Long signal: $longSignal" 
 
-
+    if (-not $longSignal) {
+        Log "No long signal for $instId — skipping" "WARN"
+        continue
+    }
     ##########################################################
     # проверка уже открытых позиций
     if ($authOk) {
@@ -276,11 +313,11 @@ foreach ($instId in $config.instruments) {
     # ---------------- apply leverage ----------------
     if ($config.set_leverage -and $config.leverage -gt 1) {
         if (-not $authOk) {
-            Log "Skipping set-leverage because earlier auth check failed" "WARN"
+            Log "Skipping Set-IsolatedLeverage because earlier auth check failed" "WARN"
         } else {
             Log "Applying leverage $($config.leverage) for $instId" "INFO"
-            $setResp = Set-Leverage -instId $instId -lever $config.leverage -mgnMode $config.mgnMode -config $config
-            if ($null -eq $setResp) { Log "Failed to set leverage; skipping" "ERROR" } else { Log "Set-Leverage response: $(ConvertTo-Json $setResp -Depth 5)" "INFO" }
+            $setResp = Set-IsolatedLeverage -instId $instId -lever $config.leverage -mgnMode $config.mgnMode -config $config
+            if ($null -eq $setResp) { Log "Failed to set leverage; skipping" "ERROR" } else { Log "Set-IsolatedLeverage response: $(ConvertTo-Json $setResp -Depth 5)" "INFO" }
         }
     }
 
