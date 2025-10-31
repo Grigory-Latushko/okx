@@ -11,10 +11,12 @@
 #>
 
 param(
-    [string]$ConfigPath = ".\config.json",
+    [string]$ConfigPath = ".\config_60m_res.json",
     [switch]$ForceLive,
     [switch]$DebugMode
 )
+
+Remove-Item data\*.csv
 
 # ----------------------------
 # Helpers & Logging
@@ -497,19 +499,19 @@ function Analyze-RsiPatterns {
 
 
     Log "Поиск лучших интервалов для RSI6/14/30..." "INFO"
-    $top6  = Find-TopIntervals -rows $rows -rsiField "RSI6"  -step $step -minSamples $minSamples -topK $topK
-    $top14 = Find-TopIntervals -rows $rows -rsiField "RSI14" -step $step -minSamples $minSamples -topK $topK
-    $top30 = Find-TopIntervals -rows $rows -rsiField "RSI30" -step $step -minSamples $minSamples -topK $topK
+    # $top6  = Find-TopIntervals -rows $rows -rsiField "RSI6"  -step $step -minSamples $minSamples -topK $topK
+    # $top14 = Find-TopIntervals -rows $rows -rsiField "RSI14" -step $step -minSamples $minSamples -topK $topK
+    # $top30 = Find-TopIntervals -rows $rows -rsiField "RSI30" -step $step -minSamples $minSamples -topK $topK
 
-    Log "Комбинируем топовые интервалы и оцениваем пересечения..." "INFO"
-    $comb = Combine-And-Evaluate -rows $rows -candidates6 $top6 -candidates14 $top14 -candidates30 $top30 -minSamples $minSamples
+    # Log "Комбинируем топовые интервалы и оцениваем пересечения..." "INFO"
+    # $comb = Combine-And-Evaluate -rows $rows -candidates6 $top6 -candidates14 $top14 -candidates30 $top30 -minSamples $minSamples
 
     # Save CSVs
     $timestamp = (Get-Date).ToString("yyyyMMdd_HHmmss")
     $outRowsFile = "./data/${symbol}.csv"
-    $outCombFile = "./data/${symbol}_combinations.csv"
+    # $outCombFile = "./data/${symbol}_combinations.csv"
     $rows | Export-Csv -Path $outRowsFile -NoTypeInformation -Encoding UTF8
-    $comb | Export-Csv -Path $outCombFile -NoTypeInformation -Encoding UTF8
+    # $comb | Export-Csv -Path $outCombFile -NoTypeInformation -Encoding UTF8
 
     Log ("Анализ завершён. Сохранены CSV: $outRowsFile и $outCombFile") "OK"
 
@@ -517,10 +519,10 @@ function Analyze-RsiPatterns {
         Symbol = $symbol
         CandlesUsed = $rows.Count
         FutureN = $futureN
-        TopSingleRSI6 = $top6
-        TopSingleRSI14 = $top14
-        TopSingleRSI30 = $top30
-        TopCombinations = $comb
+        # TopSingleRSI6 = $top6
+        # TopSingleRSI14 = $top14
+        # TopSingleRSI30 = $top30
+        # TopCombinations = $comb
     }
 }
 

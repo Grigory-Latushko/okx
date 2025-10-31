@@ -1,0 +1,17 @@
+RSI6 <30
+
+1:5 4H 
+Total Up: 3711
+Total Down: 696
+
+1:5 1H
+Total Up: 3518
+Total Down: 356
+
+1:5 30m
+Total Up: 3722
+Total Down: 503
+
+1:5 15m
+Total Up: 3255
+Total Down: 852
