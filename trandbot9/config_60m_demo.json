@@ -37,10 +37,10 @@
   "higher_tf"      : "4H",
   "atrPeriod"      : 48,
 
-  "rsi6_min"  : 41,
+  "rsi6_min"  : 30,
   "rsi14_min" : 43,
   "rsi30_min" : 45,
-  "rsi6_max"  : 59,
+  "rsi6_max"  : 70,
   "rsi14_max" : 57,
   "rsi30_max" : 55
 }

@@ -66,12 +66,6 @@ function Send-OkxRequest {
     return $null
   }
 }
-# function Get-Price { 
-#     param($instId, $config)
-#     Log "Получаем цену для $instId" "DEBUG"; 
-#     $resp = Send-OkxRequest -Method "GET" -RequestPath "/api/v5/market/ticker?instId=$($instId)" -BodyJson "" -config $config; if ($resp -and $resp.data -and $resp.data.Count -ge 1) { $p = [decimal]$resp.data[0].last; Log "Цена $instId = $p" "OK"; return $p } Log "Не удалось получить цену $instId" "WARN"; return $null 
-# }
-
 function Get-Price { 
     param($instId, $config)
     Log "Получаем цену для $instId" "DEBUG"
@@ -391,11 +385,13 @@ function Run-Bot {
             Write-Output "ATR%: $([math]::Round($atr_pct, 4)) %"
 
         # long condition (existing)
-        $longSignal  = ($price -gt $lastEMA21) -and ($price -gt $lastHigherEMA21) -and ($rsi6Curr -ge $rsi6_max) -and ($rsi14Curr -ge $rsi14_max) -and ($rsi30Curr -ge $rsi30_max) -and ($higher_rsi6Curr -ge $rsi6_max) -and ($higher_rsi14Curr -ge $rsi14_max) -and ($higher_rsi30Curr -ge $rsi30_max)
+        $longSignal  = ($rsi6Curr -lt $rsi6_min) #-and ($rsi14Curr -ge $rsi14_max) -and ($rsi30Curr -ge $rsi30_max) -and ($higher_rsi6Curr -ge $rsi6_max) -and ($higher_rsi14Curr -ge $rsi14_max) -and ($higher_rsi30Curr -ge $rsi30_max)
+        # $longSignal  = ($price -gt $lastEMA21) -and ($price -gt $lastHigherEMA21) -and ($rsi6Curr -ge $rsi6_max) -and ($rsi14Curr -ge $rsi14_max) -and ($rsi30Curr -ge $rsi30_max) -and ($higher_rsi6Curr -ge $rsi6_max) -and ($higher_rsi14Curr -ge $rsi14_max) -and ($higher_rsi30Curr -ge $rsi30_max)
             Write-Output "Long signal: $longSignal" 
 
         # short condition (mirrored logic, requires allow_shorts = true)
-        $shortSignal = ($price -lt $lastEMA21) -and ($price -lt $lastHigherEMA21) -and ($rsi6Curr -le $rsi6_min) -and ($rsi14Curr -le $rsi14_min) -and ($rsi30Curr -le $rsi30_min) -and ($higher_rsi6Curr -le $rsi6_min) -and ($higher_rsi14Curr -le $rsi14_min) -and ($higher_rsi30Curr -le $rsi30_min)
+        $shortSignal = ($rsi6Curr -gt $rsi6_max) #-and ($rsi14Curr -le $rsi14_min) -and ($rsi30Curr -le $rsi30_min) -and ($higher_rsi6Curr -le $rsi6_min) -and ($higher_rsi14Curr -le $rsi14_min) -and ($higher_rsi30Curr -le $rsi30_min)
+        # $shortSignal = ($price -lt $lastEMA21) -and ($price -lt $lastHigherEMA21) -and ($rsi6Curr -le $rsi6_min) -and ($rsi14Curr -le $rsi14_min) -and ($rsi30Curr -le $rsi30_min) -and ($higher_rsi6Curr -le $rsi6_min) -and ($higher_rsi14Curr -le $rsi14_min) -and ($higher_rsi30Curr -le $rsi30_min)
             Write-Output "Short signal: $shortSignal (allow_shorts: $allow_shorts)"
 
         if (-not $longSignal -and -not ($shortSignal -and $allow_shorts)) {
