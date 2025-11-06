@@ -4,48 +4,48 @@
             "RSI6<30": {
                 "Total Up": 3711,
                 "Total Down": 696,
-                "difference_%": 6.22                             
+                "difference": 5.33                             
             },
             "RSI6<30 RSI 14<30": {
                 "Total Up": 1708,
                 "Total Down": 266,
-                "difference_%": 22.13
+                "difference": 6.42
             }
         },
         "1H": {
             "RSI6<30": {
                 "Total Up": 3518,
                 "Total Down": 356,
-                "difference_%": 49.4                
+                "difference": 9.88                
             },
             "RSI6<30 RSI 14<30": {
                 "Total Up": 766,
                 "Total Down": 35,
-                "difference_%": 77.15
+                "difference": 21.88
             }
         },
         "30m": {
             "RSI6<30": {
                 "Total Up": 3722,
                 "Total Down": 503,
-                "difference_%": 32.42
+                "difference": 7.3
             },
             "RSI6<30 RSI 14<40": {
                 "Total Up": 1440,
                 "Total Down": 150,
-                "difference_%": 47.9
+                "difference": 9.6
             }
         },
         "15m": {
             "RSI6<30": {
                 "Total Up": 3255,
                 "Total Down": 852,
-                "difference_%": -30.8
+                "difference": 3.8
             },
             "RSI6<30 RSI 14<30": {
                 "Total Up": 1809,
                 "Total Down": 238,
-                "difference_%": 34.21
+                "difference": 7.6
             }
         }
     }

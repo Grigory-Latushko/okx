@@ -108,47 +108,176 @@ function Get-AccountConfig {
 
 # ---------------- apply leverage (isolated) ----------------
 function Set-IsolatedLeverage {
-    param($instId, $lever, $config, $posSide="long")
+    param(
+        [string]$instId,
+        [int]$lever,
+        $config,
+        [string]$posSide = "long"
+    )
 
-    # Устанавливаем isolated
-    $mgnMode = "isolated"
-    
-    # Проверяем минимальный размер позиции для leverage
+    Log "=== Set-IsolatedLeverage START for $instId lever=$lever posSide=$posSide ===" "DEBUG"
+
+    if (-not $instId) { Log "instId is required" "ERROR"; return $null }
+    if (-not $lever -or $lever -le 0) { Log "Invalid lever: $lever" "ERROR"; return $null }
+
+    # Получаем мета-информацию и цену
+    Log "Fetching instrument info for $instId" "DEBUG"
     $info = Get-InstrumentInfo -instId $instId -config $config
+    Log "Fetching current price for $instId" "DEBUG"
     $price = Get-Price -instId $instId -config $config
-    if (-not $info -or -not $price) { 
-        Log "Cannot get instrument info or price for $instId" "ERROR"; return $null 
+
+    if (-not $info) {
+        Log "Instrument info not available for $instId" "ERROR"
+        return $null
+    }
+    if (-not $price) {
+        Log "Price not available for $instId" "ERROR"
+        return $null
     }
 
+    # Преобразуем и логируем мета-поля если есть
     $ctVal = if ($info.ctVal) { [decimal]$info.ctVal } else { 1 }
-    $minSz = if ($info.minSz) { [decimal]$info.minSz } else { 0.01 }
+    $minSz = if ($info.minSz) { [decimal]$info.minSz } elseif ($info.lotSz) { [decimal]$info.lotSz } elseif ($info.sz) { [decimal]$info.sz } else { 0.01 }
+    $tick  = if ($info.tickSz) { [decimal]$info.tickSz } else { $null }
+
+    Log "Instrument meta: ctVal=$ctVal, minSz=$minSz, tick=$tick" "DEBUG"
+
+    # Проверка допустимого плеча (если в meta есть соответствующее поле)
+    $maxLeverCandidates = @()
+    foreach ($fn in @("maxLeverage","max_leverage","maxLever","maxleverage","lever","maxLeverRatio")) {
+        if ($info.PSObject.Properties.Name -contains $fn) {
+            $maxLeverCandidates += [string]$info.$fn
+        }
+    }
+    if ($maxLeverCandidates.Count -gt 0) {
+        $maxLev = [decimal]$maxLeverCandidates[0]
+        Log "Found max leverage candidate in instrument meta: $maxLev" "DEBUG"
+        if ($lever -gt $maxLev) {
+            Log "Requested lever $lever > instrument max $maxLev. Aborting." "ERROR"
+            return $null
+        }
+    } else {
+        Log "No explicit max-leverage found in instrument meta; continuing." "DEBUG"
+    }
+
+    # Рассчитаем минимальный размер позиции / контрактов ради проверки
     $notional_desired = [decimal]($config.position_size_usd * $lever)
-    $sz = [math]::Round($notional_desired / ($ctVal * $price), 8)
-    
+    if ($ctVal -gt 0) {
+        $rawContracts = [decimal]($notional_desired / ($ctVal * $price))
+        $step = if ($info.minSz) { [decimal]$info.minSz } elseif ($info.lotSz) { [decimal]$info.lotSz } elseif ($info.sz) { [decimal]$info.sz } else { 1 }
+        if ($step -le 0) { $step = 1 }
+        $sz = Set-ToStep -value $rawContracts -step $step
+        Log "Computed contracts: raw=$rawContracts, step=$step, rounded sz=$sz" "DEBUG"
+    } else {
+        $rawSize = [decimal]($notional_desired / $price)
+        $step = if ($info.minSz) { [decimal]$info.minSz } elseif ($info.lotSz) { [decimal]$info.lotSz } else { 0.0001 }
+        if ($step -le 0) { $step = 0.0001 }
+        $sz = Set-ToStep -value $rawSize -step $step
+        Log "Computed spot qty: raw=$rawSize, step=$step, rounded sz=$sz" "DEBUG"
+    }
+
+    if ($sz -le 0) {
+        if ($config.force_min_size -and $step -gt 0) {
+            if ($ctVal -gt 0) { $notional_if_forced = [math]::Round(($step * $ctVal * $price), 8) } else { $notional_if_forced = [math]::Round(($step * $price), 8) }
+            $threshold = if ($config.force_threshold_factor) { $config.force_threshold_factor } else { 3 }
+            if ($notional_if_forced -gt ($notional_desired * $threshold)) {
+                Log "Forcing minimal step would create notional $notional_if_forced USD > $threshold × desired. Aborting." "WARN"
+                return $null
+            }
+            Log "Forcing minimal step: sz = $step (forced notional = $notional_if_forced USD)" "WARN"
+            $sz = $step
+        } else {
+            Log "Calculated size <= 0 and force_min_size not allowed -> aborting" "WARN"
+            return $null
+        }
+    }
+
+    # Повторная проверка minSz
     if ($sz -lt $minSz) {
-        Log "Position size $sz < minSz $minSz for isolated leverage. Adjusting to minSz." "WARN"
+        Log "Calculated size $sz < instrument minSz $minSz. Adjusting to minSz." "WARN"
         $sz = $minSz
     }
 
-    # Подготовка тела запроса
+    $notional_actual = if ($ctVal -and $ctVal -gt 0) { [math]::Round(($sz * $ctVal * $price), 8) } else { [math]::Round(($sz * $price), 8) }
+    Log "Final size to be used for leverage decision: sz=$sz notional_actual=$notional_actual USD" "DEBUG"
+
+    # Решаем нужно ли отправлять posSide в теле запроса
+    # Пытаемся использовать глобальный/скриптовый posMode, иначе запрашиваем.
+    $pm = $null
+    if ($script:posMode) { $pm = $script:posMode } elseif ($posMode) { $pm = $posMode }
+    if (-not $pm) {
+        Log "posMode not found in memory; fetching account config" "DEBUG"
+        $g = Get-AccountConfig -config $config
+        if ($g) { $pm = $g }
+    }
+    Log "Resolved posMode = '$pm'" "DEBUG"
+
+    $mgnMode = "isolated"
     $bodyObj = @{
         instId = $instId
         lever  = ([string]$lever)
         mgnMode = $mgnMode
-        posSide = $posSide
     }
-    $body = $bodyObj | ConvertTo-Json -Compress
 
-    # Отправка запроса
-    $resp = Send-OkxRequest -Method "POST" -RequestPath "/api/v5/account/set-leverage" -BodyJson $body -config $config
-    if ($resp -and $resp.code -eq "0") {
-        Log "Set-Isolated-Leverage OK: $($resp.data | ConvertTo-Json -Depth 5)" "OK"
-        return $sz
+    # Если posMode указывает на hedge/long_short — posSide обязателен
+    if ($pm -and ($pm.ToString().ToLower().Contains("long_short") -or $pm.ToString().ToLower().Contains("hedge") -or $pm.ToString().ToLower().Contains("hedged"))) {
+        Log "Account in hedged/long_short mode -> adding posSide='$posSide' to request body" "DEBUG"
+        $bodyObj.posSide = $posSide
     } else {
-        Log "Failed to set isolated leverage for $instId" "ERROR"
+        Log "Account in net/one-way/unknown mode -> NOT adding posSide to request body (to avoid bad-request)" "DEBUG"
+    }
+
+    $body = $bodyObj | ConvertTo-Json -Compress
+    Log "Prepared set-leverage body: $body" "DEBUG"
+
+    # Выводим защищённые заголовки для дебага (маскируем секреты)
+    $masked = @{ api_key = Mask($config.api_key); passphrase = Mask($config.passphrase); secret_key = Mask($config.secret_key); baseUrl = $config.baseUrl }
+    Log "Config (masked): $($masked | ConvertTo-Json -Compress)" "DEBUG"
+
+    # Отправляем запрос и обрабатываем результат
+    try {
+        $resp = Send-OkxRequest -Method "POST" -RequestPath "/api/v5/account/set-leverage" -BodyJson $body -config $config
+        if (-not $resp) {
+            Log "No response or request failed for set-leverage (null)" "ERROR"
+            return $null
+        }
+        # Если в Send-OkxRequest для dryRun вернулся специальный объект
+        if ($resp.dryRun) {
+            Log "DryRun: set-leverage preview returned" "WARN"
+            if ($DebugMode) { ($resp | ConvertTo-Json -Depth 6) | Write-Host }
+            return $sz
+        }
+
+        # Проверяем код OKX
+        if ($resp.code -and $resp.code -eq "0") {
+            Log "Set-Isolated-Leverage OK for $instId (resp.code=0)" "OK"
+            if ($DebugMode) { Log "Response full: $($resp | ConvertTo-Json -Depth 8)" "DEBUG" }
+            return $sz
+        } else {
+            # Логируем максимально подробный ответ ошибки
+            if ($resp | ConvertTo-Json -Depth 6) {
+                Log "Set-Leverage returned non-zero code: code=$($resp.code) msg=$($resp.msg)" "ERROR"
+                if ($DebugMode) { ($resp | ConvertTo-Json -Depth 8) | Write-Host }
+            } else {
+                Log "Set-Leverage returned failure; response object present but cannot serialize" "ERROR"
+            }
+            return $null
+        }
+    } catch {
+        Log "Exception during set-leverage: $($_.Exception.Message)" "ERROR"
+        try {
+            if ($_.Exception.Response) {
+                $reader = New-Object System.IO.StreamReader($_.Exception.Response.GetResponseStream());
+                $bodyErr = $reader.ReadToEnd();
+                Log "HTTP error response body: $bodyErr" "ERROR"
+            }
+        } catch { }
         return $null
+    } finally {
+        Log "=== Set-IsolatedLeverage END for $instId ===" "DEBUG"
     }
 }
+
 
 #################### INDICATORS ####################
 
@@ -228,7 +357,6 @@ function Get-RSI([double[]]$prices, [int]$period=14) {
     }
     return $rsi
 }
-
 function Get-ATR($candles, $period) {
     if (-not $candles -or $candles.Count -le $period) { return @() }
     $trs = @()
@@ -385,7 +513,7 @@ function Run-Bot {
             Write-Output "ATR%: $([math]::Round($atr_pct, 4)) %"
 
         # long condition (existing)
-        $longSignal  = ($rsi6Curr -lt $rsi6_min) #-and ($rsi14Curr -ge $rsi14_max) -and ($rsi30Curr -ge $rsi30_max) -and ($higher_rsi6Curr -ge $rsi6_max) -and ($higher_rsi14Curr -ge $rsi14_max) -and ($higher_rsi30Curr -ge $rsi30_max)
+        $longSignal  = ($rsi6Curr -lt $rsi6_min) # -and ($rsi14Curr -ge $rsi14_max) -and ($rsi30Curr -ge $rsi30_max) -and ($higher_rsi6Curr -ge $rsi6_max) -and ($higher_rsi14Curr -ge $rsi14_max) -and ($higher_rsi30Curr -ge $rsi30_max)
         # $longSignal  = ($price -gt $lastEMA21) -and ($price -gt $lastHigherEMA21) -and ($rsi6Curr -ge $rsi6_max) -and ($rsi14Curr -ge $rsi14_max) -and ($rsi30Curr -ge $rsi30_max) -and ($higher_rsi6Curr -ge $rsi6_max) -and ($higher_rsi14Curr -ge $rsi14_max) -and ($higher_rsi30Curr -ge $rsi30_max)
             Write-Output "Long signal: $longSignal" 
 
