@@ -31,7 +31,7 @@
     "ZEREBRO-USDT-SWAP","ZETA-USDT-SWAP","ZIL-USDT-SWAP","ZK-USDT-SWAP","ZRO-USDT-SWAP","ZRX-USDT-SWAP"
   ],
   "position_size_usd"     : 2,
-  "leverage"              : 8,
+  "leverage"              : 5,
   "set_leverage"          : true,
   "mgnMode"               : "isolated",
   "force_min_size"        : true,
@@ -52,9 +52,9 @@
   "atrPeriod"      : 48,
 
   "rsi6_min"  : 30,
-  "rsi14_min" : 43,
+  "rsi14_min" : 35,
   "rsi30_min" : 45,
   "rsi6_max"  : 70,
-  "rsi14_max" : 57,
+  "rsi14_max" : 65,
   "rsi30_max" : 55
 }

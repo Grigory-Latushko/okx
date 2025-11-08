@@ -513,12 +513,12 @@ function Run-Bot {
             Write-Output "ATR%: $([math]::Round($atr_pct, 4)) %"
 
         # long condition (existing)
-        $longSignal  = ($rsi6Curr -lt $rsi6_min) # -and ($rsi14Curr -ge $rsi14_max) -and ($rsi30Curr -ge $rsi30_max) -and ($higher_rsi6Curr -ge $rsi6_max) -and ($higher_rsi14Curr -ge $rsi14_max) -and ($higher_rsi30Curr -ge $rsi30_max)
+        $longSignal  = ($rsi6Curr -lt $rsi6_min) -and ($rsi14Curr -lt $rsi14_min) # -and ($rsi30Curr -ge $rsi30_max) -and ($higher_rsi6Curr -ge $rsi6_max) -and ($higher_rsi14Curr -ge $rsi14_max) -and ($higher_rsi30Curr -ge $rsi30_max)
         # $longSignal  = ($price -gt $lastEMA21) -and ($price -gt $lastHigherEMA21) -and ($rsi6Curr -ge $rsi6_max) -and ($rsi14Curr -ge $rsi14_max) -and ($rsi30Curr -ge $rsi30_max) -and ($higher_rsi6Curr -ge $rsi6_max) -and ($higher_rsi14Curr -ge $rsi14_max) -and ($higher_rsi30Curr -ge $rsi30_max)
             Write-Output "Long signal: $longSignal" 
 
         # short condition (mirrored logic, requires allow_shorts = true)
-        $shortSignal = ($rsi6Curr -gt $rsi6_max) #-and ($rsi14Curr -le $rsi14_min) -and ($rsi30Curr -le $rsi30_min) -and ($higher_rsi6Curr -le $rsi6_min) -and ($higher_rsi14Curr -le $rsi14_min) -and ($higher_rsi30Curr -le $rsi30_min)
+        $shortSignal = ($rsi6Curr -gt $rsi6_max) -and ($rsi14Curr -gt $rsi14_min) # -and ($rsi30Curr -le $rsi30_min) -and ($higher_rsi6Curr -le $rsi6_min) -and ($higher_rsi14Curr -le $rsi14_min) -and ($higher_rsi30Curr -le $rsi30_min)
         # $shortSignal = ($price -lt $lastEMA21) -and ($price -lt $lastHigherEMA21) -and ($rsi6Curr -le $rsi6_min) -and ($rsi14Curr -le $rsi14_min) -and ($rsi30Curr -le $rsi30_min) -and ($higher_rsi6Curr -le $rsi6_min) -and ($higher_rsi14Curr -le $rsi14_min) -and ($higher_rsi30Curr -le $rsi30_min)
             Write-Output "Short signal: $shortSignal (allow_shorts: $allow_shorts)"
 
