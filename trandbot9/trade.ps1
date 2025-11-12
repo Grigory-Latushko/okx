@@ -464,10 +464,10 @@ function Run-Bot {
         #    Write-Output "Закрытия: $($closes -join ', ')" "DEBUG"
 
         # расчет EMA21
-        $ema21 = Get-EMA $closes 21
-        #    Write-Output "EMA21: $($ema21 -join ', ')" "DEBUG"
-        $lastEMA21     = $ema21[-1]
-            Write-Output "Последняя EMA21: $lastEMA21" 
+        # $ema21 = Get-EMA $closes 21
+        # #    Write-Output "EMA21: $($ema21 -join ', ')" "DEBUG"
+        # $lastEMA21     = $ema21[-1]
+        #     Write-Output "Последняя EMA21: $lastEMA21" 
   
         # расчет RSI6, RSI14, RSI30
         $rsi6Arr  = Get-RSI $closes 6
@@ -482,27 +482,27 @@ function Run-Bot {
         $rsi30Curr = $rsi30Arr[-1]
             Write-Output "RSI30: $rsi30Curr"
 
-        $higherCandles = Get-Candles $instId $candle_limit $higher_tf
-            Write-Output "Получено $($higherCandles.Count) свечей для $instId по таймфрейму $higher_tf"
-        if ($higherCandles.Count -lt ($config.trend_candles + 10)) { continue }
+        # $higherCandles = Get-Candles $instId $candle_limit $higher_tf
+        #     Write-Output "Получено $($higherCandles.Count) свечей для $instId по таймфрейму $higher_tf"
+        # if ($higherCandles.Count -lt ($config.trend_candles + 10)) { continue }
 
-        $higher_closes   = $higherCandles | ForEach-Object { $_.Close }
+        # $higher_closes   = $higherCandles | ForEach-Object { $_.Close }
 
-        $higher_ema21    = Get-EMA $higher_closes 21
-        $lastHigherEMA21 = $higher_ema21[-1]
-            Write-Output "Последняя Higher TF EMA21: $lastHigherEMA21"
+        # $higher_ema21    = Get-EMA $higher_closes 21
+        # $lastHigherEMA21 = $higher_ema21[-1]
+        #     Write-Output "Последняя Higher TF EMA21: $lastHigherEMA21"
 
-        $higher_rsi6Arr  = Get-RSI $higher_closes 6
-        $higher_rsi14Arr = Get-RSI $higher_closes 14
-        $higher_rsi30Arr = Get-RSI $higher_closes 30
-        if ($higher_rsi6Arr.Count -lt 1 -or $higher_rsi14Arr.Count -lt 1 -or $higher_rsi30Arr.Count -lt 1) { continue }
+        # $higher_rsi6Arr  = Get-RSI $higher_closes 6
+        # $higher_rsi14Arr = Get-RSI $higher_closes 14
+        # $higher_rsi30Arr = Get-RSI $higher_closes 30
+        # if ($higher_rsi6Arr.Count -lt 1 -or $higher_rsi14Arr.Count -lt 1 -or $higher_rsi30Arr.Count -lt 1) { continue }
 
-        $higher_rsi6Curr  = $higher_rsi6Arr[-1]
-            write-Output "Higher TF RSI6: $higher_rsi6Curr"
-        $higher_rsi14Curr = $higher_rsi14Arr[-1]
-            write-Output "Higher TF RSI14: $higher_rsi14Curr"
-        $higher_rsi30Curr = $higher_rsi30Arr[-1]
-            write-Output "Higher TF RSI30: $higher_rsi30Curr"
+        # $higher_rsi6Curr  = $higher_rsi6Arr[-1]
+        #     write-Output "Higher TF RSI6: $higher_rsi6Curr"
+        # $higher_rsi14Curr = $higher_rsi14Arr[-1]
+        #     write-Output "Higher TF RSI14: $higher_rsi14Curr"
+        # $higher_rsi30Curr = $higher_rsi30Arr[-1]
+        #     write-Output "Higher TF RSI30: $higher_rsi30Curr"
 
         # расчет ATR
         $atrArr = Get-ATR $candles $atrPeriod
