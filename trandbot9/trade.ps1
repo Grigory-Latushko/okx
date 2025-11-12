@@ -388,12 +388,12 @@ $tp_atr_multiplier = if ($null -ne $config.tp_atr_multiplier) { [decimal]$config
 $sl_atr_multiplier = if ($null -ne $config.sl_atr_multiplier) { [decimal]$config.sl_atr_multiplier } else { 1.0 }
 
 # RSI thresholds (for long use *_max, for short use *_min). Provide sensible defaults.
-$rsi6_max       = if ($null -ne $config.rsi6_max)  { [decimal]$config.rsi6_max }  else { 70 }
-$rsi14_max      = if ($null -ne $config.rsi14_max) { [decimal]$config.rsi14_max } else { 65 }
+$rsi6_max       = if ($null -ne $config.rsi6_max)  { [decimal]$config.rsi6_max }  else { 75 }
+$rsi14_max      = if ($null -ne $config.rsi14_max) { [decimal]$config.rsi14_max } else { 70 }
 $rsi30_max      = if ($null -ne $config.rsi30_max) { [decimal]$config.rsi30_max } else { 60 }
 
-$rsi6_min       = if ($null -ne $config.rsi6_min)  { [decimal]$config.rsi6_min }  else { 30 }
-$rsi14_min      = if ($null -ne $config.rsi14_min) { [decimal]$config.rsi14_min } else { 35 }
+$rsi6_min       = if ($null -ne $config.rsi6_min)  { [decimal]$config.rsi6_min }  else { 25 }
+$rsi14_min      = if ($null -ne $config.rsi14_min) { [decimal]$config.rsi14_min } else { 30 }
 $rsi30_min      = if ($null -ne $config.rsi30_min) { [decimal]$config.rsi30_min } else { 40 }
 
 $allow_shorts = if ($null -ne $config.allow_shorts) { [bool]$config.allow_shorts } else { $false }
@@ -518,9 +518,9 @@ function Run-Bot {
             Write-Output "Long signal: $longSignal" 
 
         # short condition (mirrored logic, requires allow_shorts = true)
-        $shortSignal = ($rsi6Curr -gt $rsi6_max) -and ($rsi14Curr -gt $rsi14_min) # -and ($rsi30Curr -le $rsi30_min) -and ($higher_rsi6Curr -le $rsi6_min) -and ($higher_rsi14Curr -le $rsi14_min) -and ($higher_rsi30Curr -le $rsi30_min)
+        $shortSignal = ($rsi6Curr -gt $rsi6_max) -and ($rsi14Curr -gt $rsi14_max) # -and ($rsi30Curr -le $rsi30_min) -and ($higher_rsi6Curr -le $rsi6_min) -and ($higher_rsi14Curr -le $rsi14_min) -and ($higher_rsi30Curr -le $rsi30_min)
         # $shortSignal = ($price -lt $lastEMA21) -and ($price -lt $lastHigherEMA21) -and ($rsi6Curr -le $rsi6_min) -and ($rsi14Curr -le $rsi14_min) -and ($rsi30Curr -le $rsi30_min) -and ($higher_rsi6Curr -le $rsi6_min) -and ($higher_rsi14Curr -le $rsi14_min) -and ($higher_rsi30Curr -le $rsi30_min)
-            Write-Output "Short signal: $shortSignal (allow_shorts: $allow_shorts)"
+            Write-Output "Short signal: $shortSignal (allow_shorts: $allow_shorts)" 
 
         if (-not $longSignal -and -not ($shortSignal -and $allow_shorts)) {
             Log "No trading signal for $instId — skipping" "WARN"
