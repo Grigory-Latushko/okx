@@ -8,4 +8,4 @@ Loop added. Can trade long
 TP SL ATR based
 Short trade added
 
-Двойное значение RSI. Вход только если предыдущая свеча и текущая в нужном диапазоне
+Тройной сигнал RSI. Вход только две свечи RSI + RSI LIVE в нужном диапазоне
