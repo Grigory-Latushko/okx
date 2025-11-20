@@ -1,7 +1,7 @@
 {
-  "api_key": "e9595840-2bf0-4aed-a33a-7e3083e5561c",
-  "secret_key": "A782A64F3257A2474862450426A96DE8",
-  "passphrase": "Aa111111!",
+  "api_key": "8ab5269b-de8d-4ba9-9c34-4bd744c2bbb3",
+  "secret_key": "57870229B5AE2950D3639464873763CE",
+  "passphrase": "1027933Aa!",
   "instruments": [
     "ETH-USD-SWAP","SOL-USD-SWAP","DOGE-USD-SWAP","XRP-USD-SWAP","ADA-USD-SWAP","AVAX-USD-SWAP","BCH-USD-SWAP","DOT-USD-SWAP","ETC-USD-SWAP",
     "FIL-USD-SWAP","LINK-USD-SWAP","LTC-USD-SWAP","SUI-USD-SWAP","UNI-USD-SWAP","BTC-USDT-SWAP","ETH-USDT-SWAP","SOL-USDT-SWAP",
@@ -42,7 +42,7 @@
   "rerun_interval_s"      : 0.5,
   "allow_shorts"          : true,
 
-  "tp_atr_multiplier" : 1,
+  "tp_atr_multiplier" : 2,
   "sl_atr_multiplier" : 5,
   "stop_loss_pct"     : 0.02,
 
