@@ -30,7 +30,7 @@
     "WCT-USDT-SWAP","WIF-USDT-SWAP","WLD-USDT-SWAP","WOO-USDT-SWAP","XAUT-USDT-SWAP","XLM-USDT-SWAP","XTZ-USDT-SWAP","YFI-USDT-SWAP","YGG-USDT-SWAP","ZENT-USDT-SWAP",
     "ZEREBRO-USDT-SWAP","ZETA-USDT-SWAP","ZIL-USDT-SWAP","ZK-USDT-SWAP","ZRO-USDT-SWAP","ZRX-USDT-SWAP"
   ],
-  "position_size_usd"     : 2.5,
+  "position_size_usd"     : 2,
   "leverage"              : 5,
   "set_leverage"          : true,
   "mgnMode"               : "isolated",
