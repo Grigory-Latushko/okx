@@ -278,7 +278,6 @@ function Set-IsolatedLeverage {
     }
 }
 
-
 #################### INDICATORS ####################
 
 function Get-Candles($symbol, $limit, $period) {
@@ -379,6 +378,222 @@ function Get-ATR($candles, $period) {
     return $atr
 }
 
+############## Trailing stops ######################
+
+# ---------------- convert existing TPs -> trailing ----------------
+# default config keys:
+#   convert_existing_tps (bool) - включить проход (по-умолчанию: $true)
+#   tp_to_trailing_deviation_pct (decimal) - отклонение в процентах (по-умолчанию: 0.5)
+
+function Find-AttachOrdersForInst {
+    param([string]$instId, $config)
+
+    # Best-effort: пытаемся получить отложенные/algos ордера для инструмента.
+    # В зависимости от версии OKX вам, возможно, потребуется заменить RequestPath на:
+    # "/api/v5/trade/orders-pending", "/api/v5/trade/order-algos", "/api/v5/trade/algos" и т.п.
+    try {
+        Log "Finding attach/algo orders for $instId" "DEBUG"
+        $reqPath = "/api/v5/trade/orders-pending?instId=$instId"   # <- при необходимости замените
+        $resp = Send-OkxRequest -Method "GET" -RequestPath $reqPath -BodyJson "" -config $config
+        if (-not $resp) { Log "No response for attach-orders query $instId" "WARN"; return @() }
+        # resp.data ожидается как список ордеров; так или иначе — фильтруем те, которые имеют attachAlgoClOrdId / tpTriggerPx / slTriggerPx
+        if ($resp.data -and $resp.data.Count -gt 0) {
+            $matches = $resp.data | Where-Object { $_.attachAlgoClOrdId -or $_.tpTriggerPx -or $_.slTriggerPx -or $_.algoType -or $_.algoParams }
+            return $matches
+        }
+    } catch {
+        Log "Find-AttachOrdersForInst error: $($_.Exception.Message)" "ERROR"
+    }
+    return @()
+}
+
+function Cancel-AttachOrders {
+    param([string[]]$algoClOrdIds, [string]$instId, $config)
+    if (-not $algoClOrdIds -or $algoClOrdIds.Count -eq 0) { return $false }
+    try {
+        Log "Cancelling ${($algoClOrdIds | Measure-Object).Count} attach orders for $instId" "INFO"
+        # Тут тоже: OKX имеет endpoint для отмены algos, например "/api/v5/trade/cancel-algos"
+        $bodyObj = @{
+            instId = $instId
+            algoClOrdIds = $algoClOrdIds
+        }
+        $body = $bodyObj | ConvertTo-Json -Compress
+        $resp = Send-OkxRequest -Method "POST" -RequestPath "/api/v5/trade/cancel-algos" -BodyJson $body -config $config  # <- замените если нужно
+        if ($resp -and ($resp.code -eq "0" -or -not $resp.code)) {
+            Log "Cancel attach response OK" "OK"
+            return $true
+        } else {
+            Log "Cancel attach returned non-zero or unexpected response: $($resp | ConvertTo-Json -Depth 4)" "WARN"
+            return $false
+        }
+    } catch {
+        Log "Cancel-AttachOrders exception: $($_.Exception.Message)" "ERROR"
+        return $false
+    }
+}
+
+function Create-TrailingAttachForPosition {
+    param(
+        [string]$instId,
+        [string]$side,            # "buy" or "sell" (side of original open order)
+        [decimal]$tpPrice,       # activation price (use existing TP)
+        [string]$sz,             # size string
+        $config,
+        [decimal]$deviationPct = 0.5
+    )
+
+    # callbackRate обычно указывают в процентах (например 0.5) — это "отклонение"
+    $callbackRate = [math]::Round($deviationPct, 6)
+
+    # Подготовим attach / algo объект для трейлинга.
+    # Поля ниже — best-effort. При необходимости адаптируйте к вашей версии OKX:
+    # - algoType / triggerPx / callbackRate / sz
+    # - у некоторых версий поле называется 'callback_rate' или 'trail' и т.д.
+    $attachId = "trail" + [guid]::NewGuid().ToString("N").Substring(0,12)
+    $attachObj = @{
+        attachAlgoClOrdId = $attachId
+        algoType           = "trailing"           # <- возможно нужно "trail" или "stopTrail"
+        triggerPx          = ([string]$tpPrice)   # цена активации = прежний TP
+        callbackRate       = ([string]$callbackRate) # 0.5
+        sz                 = ([string]$sz)
+        # дополнительные параметры, если потребуются:
+        # side               = $side
+        # tdMode             = $config.mgnMode
+    }
+
+    $bodyObj = @{
+        instId = $instId
+        algoOrder = $attachObj
+    }
+
+    $body = $bodyObj | ConvertTo-Json -Compress
+    Log "Creating trailing-attach for $instId $body" "DEBUG"
+
+    # В некоторых версиях OKX создание algos идет через "/api/v5/trade/order" с attachAlgoOrds в теле,
+    # либо через отдельный endpoint "/api/v5/trade/order-algo". Попробуйте оба варианта если первый не работает.
+    # Сначала пробуем отдельный endpoint:
+    $tryPaths = @("/api/v5/trade/order-algo", "/api/v5/trade/order") 
+
+    foreach ($p in $tryPaths) {
+        try {
+            $resp = Send-OkxRequest -Method "POST" -RequestPath $p -BodyJson $body -config $config
+            if ($resp -and ($resp.code -eq "0" -or -not $resp.code)) {
+                Log "Trailing attach created via $p" "OK"
+                return $true
+            } else {
+                Log "Create trailing attach via $p returned non-ok: $($resp | ConvertTo-Json -Depth 4)" "DEBUG"
+            }
+        } catch {
+            Log "Create-TrailingAttachForPosition via $p exception: $($_.Exception.Message)" "WARN"
+        }
+    }
+
+    Log "Failed to create trailing attach for $instId" "ERROR"
+    return $false
+}
+
+function Convert-TpToTrailingForPosition {
+    param([psobject]$position, $config)
+
+    # позиция приходит из /account/positions: содержит instId, pos, side/hold, avgPx и т.п.
+    $instId = $position.instId
+    $posAmt = [decimal]$position.pos
+    if ($posAmt -eq 0) { return }
+
+    Log "Converting TP->Trailing for position $instId pos=$posAmt" "INFO"
+
+    # 1) Найти attach/algo ордера, относящиеся к этому инструменту (best-effort)
+    $attachOrders = Find-AttachOrdersForInst -instId $instId -config $config
+    if (-not $attachOrders -or $attachOrders.Count -eq 0) {
+        Log "No attach/algo orders found for $instId (nothing to convert)" "DEBUG"
+        return
+    }
+
+    # 2) Отфильтруем те, которые выглядят как TP (имеют tpTriggerPx / tpOrdPx / attachAlgoClOrdId начин. с tpsl)
+    $tpAlgos = $attachOrders | Where-Object {
+        ($_.tpTriggerPx -or $_.tpOrdPx) -or ($_.attachAlgoClOrdId -and $_.attachAlgoClOrdId -match "^tpsl")
+    }
+    if (-not $tpAlgos -or $tpAlgos.Count -eq 0) {
+        Log "No obvious TP attach orders found for $instId" "DEBUG"
+        return
+    }
+
+    # подготовка списка algoClOrdIds для отмены и извлечение TP цен
+    $algoIds = @()
+    $tpPrices = @()
+    foreach ($a in $tpAlgos) {
+        if ($a.attachAlgoClOrdId) { $algoIds += $a.attachAlgoClOrdId }
+        if ($a.tpTriggerPx) { $tpPrices += [decimal]$a.tpTriggerPx }
+        elseif ($a.tpOrdPx) { $tpPrices += [decimal]$a.tpOrdPx }
+        elseif ($a.triggerPx) { $tpPrices += [decimal]$a.triggerPx }
+    }
+
+    if ($algoIds.Count -eq 0) {
+        Log "No algoClOrdIds to cancel for $instId" "DEBUG"
+        return
+    }
+
+    # 3) Отменяем найденные attach algos
+    $cancelOk = Cancel-AttachOrders -algoClOrdIds $algoIds -instId $instId -config $config
+    if (-not $cancelOk) {
+        Log "Failed to cancel existing attach orders for $instId; aborting conversion" "WARN"
+        return
+    }
+
+    # 4) Создаём trailing-attach. Возьмём активацию из первого найденного TP
+    $tpPrice = if ($tpPrices.Count -gt 0) { $tpPrices[0] } else { 
+        Log "No TP price found in attach; using current market price as trigger" "WARN"
+        $p = Get-Price -instId $instId -config $config
+        if ($p) { $p } else { Log "Cannot get price for $instId, aborting trailing attach creation" "ERROR"; return }
+    }
+
+    # определим направление — если позиция положительная -> long (для закрытия трейлинг должен быть sell)
+    $sideForTrailing = if ($posAmt -gt 0) { "sell" } else { "buy" }
+
+    # размер — используем absolute value из позиции (или можно использовать saved sz), переводим в строку
+    $sz = [string][math]::Abs([decimal]$position.pos)
+
+    $deviation = if ($null -ne $config.tp_to_trailing_deviation_pct) { [decimal]$config.tp_to_trailing_deviation_pct } else { 0.5 }
+
+    $createOk = Create-TrailingAttachForPosition -instId $instId -side $sideForTrailing -tpPrice $tpPrice -sz $sz -config $config -deviationPct $deviation
+    if ($createOk) {
+        Log "Converted TP -> Trailing for $instId (trigger=$tpPrice, deviation=${deviation}%)" "OK"
+    } else {
+        Log "Failed to create trailing attach for $instId after cancelling TP attach" "ERROR"
+    }
+}
+
+function Convert-OpenPositionsToTrailing {
+    param($config)
+
+    if (-not $config.convert_existing_tps) {
+        Log "convert_existing_tps disabled in config; skipping conversion pass" "DEBUG"
+        return
+    }
+    if (-not $authOk) {
+        Log "Auth not OK; skipping open positions convert pass" "WARN"
+        return
+    }
+
+    Log "Running convert-existing-TPs pass..." "INFO"
+    try {
+        $positionsResp = Send-OkxRequest -Method "GET" -RequestPath "/api/v5/account/positions" -BodyJson "" -config $config
+        if (-not $positionsResp -or -not $positionsResp.data) {
+            Log "No positions response or empty data" "DEBUG"
+            return
+        }
+
+        foreach ($p in $positionsResp.data) {
+            if ($p.pos -ne 0) {
+                Convert-TpToTrailingForPosition -position $p -config $config
+            }
+        }
+    } catch {
+        Log "Convert-OpenPositionsToTrailing exception: $($_.Exception.Message)" "ERROR"
+    }
+}
+
+
 # ---------------- main ----------------
 
 $config = Get-Content $configPath -Raw | ConvertFrom-Json
@@ -458,69 +673,50 @@ function Run-Bot {
         ############ TRADE CONDITIONS CALCULATION ############
         $candles = Get-Candles $instId $candle_limit $candle_period
         Write-Output "Получено $($candles.Count) свечей для $instId по таймфрейму $candle_period"
-        if ($candles.Count -lt 1) { continue }
+        if ($candles.Count -lt 2) { continue }   # минимум 2 свечи
 
+        # закрытия свечей
         $closes = $candles | ForEach-Object { $_.Close }
-        #    Write-Output "Закрытия: $($closes -join ', ')" "DEBUG"
 
-        # расчет EMA21
-        # $ema21 = Get-EMA $closes 21
-        # #    Write-Output "EMA21: $($ema21 -join ', ')" "DEBUG"
-        # $lastEMA21     = $ema21[-1]
-        #     Write-Output "Последняя EMA21: $lastEMA21" 
-  
-        # расчет RSI6, RSI14, RSI30
-        $rsi6Arr  = Get-RSI $closes 6
-        $rsi14Arr = Get-RSI $closes 14
-        $rsi30Arr = Get-RSI $closes 30
-        if ($rsi6Arr.Count -lt 1 -or $rsi14Arr.Count -lt 1 -or $rsi30Arr.Count -lt 1) { continue }
+        # массив закрытий без последней свечи
+        $closes_prev = $closes[0..($closes.Count - 2)]
 
-        $rsi6Curr  = $rsi6Arr[-1]
-            Write-Output "RSI6: $rsi6Curr" 
-        $rsi14Curr = $rsi14Arr[-1]
-            Write-Output "RSI14: $rsi14Curr"
-        $rsi30Curr = $rsi30Arr[-1]
-            Write-Output "RSI30: $rsi30Curr"
+        # расчет RSI
+        $rsi6Arr       = Get-RSI $closes 6
+        $rsi6Arr_prev  = Get-RSI $closes_prev 6
 
-        # $higherCandles = Get-Candles $instId $candle_limit $higher_tf
-        #     Write-Output "Получено $($higherCandles.Count) свечей для $instId по таймфрейму $higher_tf"
-        # if ($higherCandles.Count -lt ($config.trend_candles + 10)) { continue }
+        # RSI последней и предпоследней свечи
+        $rsi6Curr = $rsi6Arr[-1]
+        $rsi6Prev = $rsi6Arr_prev[-1]
 
-        # $higher_closes   = $higherCandles | ForEach-Object { $_.Close }
+        Write-Output "RSI6: prev=$rsi6Prev, curr=$rsi6Curr"
 
-        # $higher_ema21    = Get-EMA $higher_closes 21
-        # $lastHigherEMA21 = $higher_ema21[-1]
-        #     Write-Output "Последняя Higher TF EMA21: $lastHigherEMA21"
+        # ===== RSI LIVE (с учётом текущей цены) =====
+        $closes_live = $closes + $price    # добавляем текущую цену неформировавшейся свечи
+        $rsi6Arr_live = Get-RSI $closes_live 6
+        $rsi6Live = $rsi6Arr_live[-1]
 
-        # $higher_rsi6Arr  = Get-RSI $higher_closes 6
-        # $higher_rsi14Arr = Get-RSI $higher_closes 14
-        # $higher_rsi30Arr = Get-RSI $higher_closes 30
-        # if ($higher_rsi6Arr.Count -lt 1 -or $higher_rsi14Arr.Count -lt 1 -or $higher_rsi30Arr.Count -lt 1) { continue }
+        Write-Output "RSI6 Live = $rsi6Live"
 
-        # $higher_rsi6Curr  = $higher_rsi6Arr[-1]
-        #     write-Output "Higher TF RSI6: $higher_rsi6Curr"
-        # $higher_rsi14Curr = $higher_rsi14Arr[-1]
-        #     write-Output "Higher TF RSI14: $higher_rsi14Curr"
-        # $higher_rsi30Curr = $higher_rsi30Arr[-1]
-        #     write-Output "Higher TF RSI30: $higher_rsi30Curr"
-
-        # расчет ATR
+        # ===== ATR =====
         $atrArr = Get-ATR $candles $atrPeriod
         if ($atrArr.Count -eq 0) { continue }
         $atr = $atrArr[-1]
-            Write-Output "ATR($atrPeriod): $atr"
+        Write-Output "ATR($atrPeriod): $atr"
         $atr_pct = ($atr / $price) * 100
-            Write-Output "ATR%: $([math]::Round($atr_pct, 4)) %"
+        Write-Output "ATR%: $([math]::Round($atr_pct, 4)) %"
 
-        # long condition (existing)
-        $longSignal  = ($rsi6Curr -lt $rsi6_min) -and ($rsi14Curr -lt $rsi14_min) # -and ($rsi30Curr -ge $rsi30_max) -and ($higher_rsi6Curr -ge $rsi6_max) -and ($higher_rsi14Curr -ge $rsi14_max) -and ($higher_rsi30Curr -ge $rsi30_max)
-        # $longSignal  = ($price -gt $lastEMA21) -and ($price -gt $lastHigherEMA21) -and ($rsi6Curr -ge $rsi6_max) -and ($rsi14Curr -ge $rsi14_max) -and ($rsi30Curr -ge $rsi30_max) -and ($higher_rsi6Curr -ge $rsi6_max) -and ($higher_rsi14Curr -ge $rsi14_max) -and ($higher_rsi30Curr -ge $rsi30_max)
-            Write-Output "Long signal: $longSignal" 
+        # ===== ТРЕЙД-СИГНАЛЫ (3x RSI check) =====
 
-        # short condition (mirrored logic, requires allow_shorts = true)
-        $shortSignal = ($rsi6Curr -gt $rsi6_max) -and ($rsi14Curr -gt $rsi14_max) # -and ($rsi30Curr -le $rsi30_min) -and ($higher_rsi6Curr -le $rsi6_min) -and ($higher_rsi14Curr -le $rsi14_min) -and ($higher_rsi30Curr -le $rsi30_min)
-        # $shortSignal = ($price -lt $lastEMA21) -and ($price -lt $lastHigherEMA21) -and ($rsi6Curr -le $rsi6_min) -and ($rsi14Curr -le $rsi14_min) -and ($rsi30Curr -le $rsi30_min) -and ($higher_rsi6Curr -le $rsi6_min) -and ($higher_rsi14Curr -le $rsi14_min) -and ($higher_rsi30Curr -le $rsi30_min)
-            Write-Output "Short signal: $shortSignal (allow_shorts: $allow_shorts)" 
+        $longSignal =
+            ($rsi6Prev -lt $rsi6_min) -and
+            ($rsi6Curr -lt $rsi6_min) -and
+            ($rsi6Live -lt $rsi6_min)
+
+        $shortSignal =
+            ($rsi6Prev -gt $rsi6_max) -and
+            ($rsi6Curr -gt $rsi6_max) -and
+            ($rsi6Live -gt $rsi6_max)
 
         if (-not $longSignal -and -not ($shortSignal -and $allow_shorts)) {
             Log "No trading signal for $instId — skipping" "WARN"
@@ -603,10 +799,8 @@ function Run-Bot {
         } elseif ($contractMode) { $orderObj.posSide = if ($side -eq "buy") { "long" } else { "short" }; Log "posMode unknown -> adding posSide for contract (conservative)" "DEBUG" }
 
         # ---------------- calculate TP & SL ----------------
-        # $tpPct = $config.take_profit_pct
         $tpPct = $atr_pct * $tp_atr_multiplier / 100
             write-Output "Take Profit % based on ATR: $([math]::Round($tpPct * 100, 4)) %"
-        # $slPct = if ($config.PSObject.Properties.Name -contains "stop_loss_pct") { [decimal]$config.stop_loss_pct } else { 0.01 } # default 1% if not in config
         $slPct = $atr_pct * $sl_atr_multiplier / 100
             write-Output "Stop Loss % based on ATR: $([math]::Round($slPct * 100, 4)) %"
         $estimatedEntry = $price
@@ -661,5 +855,6 @@ function Run-Bot {
 }
 
 while ($true) {
+    Convert-OpenPositionsToTrailing -config $config
     Run-Bot
 }

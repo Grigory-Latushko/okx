@@ -1,0 +1,38 @@
+{
+  "api_key": "e9595840-2bf0-4aed-a33a-7e3083e5561c",
+  "secret_key": "A782A64F3257A2474862450426A96DE8",
+  "passphrase": "Aa111111!",
+  "instruments": [
+    "BTC-USDT-SWAP","ETH-USDT-SWAP","SOL-USDT-SWAP", "DOGE-USDT-SWAP","XRP-USDT-SWAP","LTC-USDT-SWAP","ADA-USDT-SWAP","BNB-USDT-SWAP","BCH-USDT-SWAP","TRX-USDT-SWAP","XLM-USDT-SWAP",
+    "HBAR-USDT-SWAP","AVAX-USD-SWAP","SUI-USDT-SWAP","CRO-USDT-SWAP","TON-USDT-SWAP","DOT-USDT-SWAP","ICP-USDT-SWAP","PI-USDT-SWAP","APT-USDT-SWAP","ALGO-USDT-SWAP","ATOM-USDT-SWAP",
+    "IP-USDT-SWAP","INJ-USDT-SWAP","XTZ-USDT-SWAP","FLOW-USDT-SWAP","CHZ-USDT-SWAP","NEO-USDT-SWAP","EGLD-USDT-SWAP","LINK-USDT-SWAP","SHIB-USDT-SWAP","UNI-USD-SWAP",
+    "AAVE-USDT-SWAP","TRUMP-USDT-SWAP","ARB-USDT-SWAP","OP-USDT-SWAP","CRV-USDT-SWAP","LDO-USDT-SWAP"
+  ],
+  "position_size_usd"     : 1,
+  "leverage"              : 5,
+  "set_leverage"          : true,
+  "mgnMode"               : "isolated",
+  "force_min_size"        : true,
+  "force_threshold_factor": 3,
+  "dryRun"                : false,
+  "simulated"             : false,
+  "baseUrl"               : "https://www.okx.com",
+  "rerun_interval_s"      : 0.5,
+  "allow_shorts"          : true,
+
+  "tp_atr_multiplier" : 2,
+  "sl_atr_multiplier" : 5,
+  "stop_loss_pct"     : 0.02,
+
+  "candle_limit"   : 120,
+  "candle_period"  : "1H",
+  "higher_tf"      : "4H",
+  "atrPeriod"      : 48,
+
+  "rsi6_min"  : 25,
+  "rsi14_min" : 28,
+  "rsi30_min" : 45,
+  "rsi6_max"  : 75,
+  "rsi14_max" : 72,
+  "rsi30_max" : 55
+}
