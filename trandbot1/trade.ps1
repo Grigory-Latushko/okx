@@ -380,26 +380,31 @@ function Get-ATR($candles, $period) {
 
 ############## Trailing stops ######################
 
-# ---------------- convert existing TPs -> trailing ----------------
-# default config keys:
-#   convert_existing_tps (bool) - включить проход (по-умолчанию: $true)
-#   tp_to_trailing_deviation_pct (decimal) - отклонение в процентах (по-умолчанию: 0.5)
-
 function Find-AttachOrdersForInst {
     param([string]$instId, $config)
 
-    # Best-effort: пытаемся получить отложенные/algos ордера для инструмента.
-    # В зависимости от версии OKX вам, возможно, потребуется заменить RequestPath на:
-    # "/api/v5/trade/orders-pending", "/api/v5/trade/order-algos", "/api/v5/trade/algos" и т.п.
     try {
-        Log "Finding attach/algo orders for $instId" "DEBUG"
-        $reqPath = "/api/v5/trade/orders-pending?instId=$instId"   # <- при необходимости замените
+        Log "Finding attach/algo orders for $instId (orders-algo-pending)" "DEBUG"
+        $reqPath = "/api/v5/trade/orders-algo-pending?instId=$instId"
         $resp = Send-OkxRequest -Method "GET" -RequestPath $reqPath -BodyJson "" -config $config
         if (-not $resp) { Log "No response for attach-orders query $instId" "WARN"; return @() }
-        # resp.data ожидается как список ордеров; так или иначе — фильтруем те, которые имеют attachAlgoClOrdId / tpTriggerPx / slTriggerPx
+
+        # OKX returns algo orders in resp.data; filter for TP/SL / conditional types
         if ($resp.data -and $resp.data.Count -gt 0) {
-            $matches = $resp.data | Where-Object { $_.attachAlgoClOrdId -or $_.tpTriggerPx -or $_.slTriggerPx -or $_.algoType -or $_.algoParams }
-            return $matches
+            # typical fields: algoId, algoClOrdId, algoType/ordType, tpTriggerPx, tpOrdPx, triggerPx, activePx
+            $matches = $resp.data | Where-Object {
+                ($_.tpTriggerPx -or $_.tpOrdPx -or $_.triggerPx -or $_.ordType -eq "conditional" -or $_.ordType -eq "oco") 
+            }
+            if ($matches.Count -gt 0) {
+                Log "Found $($matches.Count) algo attach(s) for $instId" "DEBUG"
+                if ($DebugMode) { ($matches | ConvertTo-Json -Depth 6) | Write-Host }
+                return $matches
+            } else {
+                Log "No TP/SL-like algo attaches in orders-algo-pending for $instId" "DEBUG"
+                if ($DebugMode) { ($resp.data | ConvertTo-Json -Depth 5) | Write-Host }
+            }
+        } else {
+            Log "orders-algo-pending returned empty data for $instId" "DEBUG"
         }
     } catch {
         Log "Find-AttachOrdersForInst error: $($_.Exception.Message)" "ERROR"
@@ -408,26 +413,53 @@ function Find-AttachOrdersForInst {
 }
 
 function Cancel-AttachOrders {
-    param([string[]]$algoClOrdIds, [string]$instId, $config)
-    if (-not $algoClOrdIds -or $algoClOrdIds.Count -eq 0) { return $false }
+    param([array]$algoItems, [string]$instId, $config)
+    # algoItems - array of objects: prefer algoId, fallback to algoClOrdId/attachAlgoClOrdId
+    if (-not $algoItems -or $algoItems.Count -eq 0) { return $false }
+
+    # Build payload for cancel-algos (expects array of { "algoId": "...", "instId":"..." } or similar)
+    $payload = @()
+    foreach ($it in $algoItems) {
+        $obj = @{}
+        if ($it.algoId) { $obj.algoId = $it.algoId }
+        elseif ($it.algoClOrdId) { $obj.algoClOrdId = $it.algoClOrdId }
+        elseif ($it.attachAlgoClOrdId) { $obj.algoClOrdId = $it.attachAlgoClOrdId }
+        else { continue }
+        $obj.instId = $instId
+        $payload += $obj
+    }
+    if ($payload.Count -eq 0) { Log "No usable algo identifiers to cancel for $instId" "DEBUG"; return $false }
+
+    $body = ($payload | ConvertTo-Json -Compress)
+    Log "Attempting cancel-algos for $instId payload: $body" "DEBUG"
+
+    # Try cancel-algos first (covers conditional TP/SL). If fails or API returns error for trailing, try cancel-advance-algos.
     try {
-        Log "Cancelling ${($algoClOrdIds | Measure-Object).Count} attach orders for $instId" "INFO"
-        # Тут тоже: OKX имеет endpoint для отмены algos, например "/api/v5/trade/cancel-algos"
-        $bodyObj = @{
-            instId = $instId
-            algoClOrdIds = $algoClOrdIds
-        }
-        $body = $bodyObj | ConvertTo-Json -Compress
-        $resp = Send-OkxRequest -Method "POST" -RequestPath "/api/v5/trade/cancel-algos" -BodyJson $body -config $config  # <- замените если нужно
+        $resp = Send-OkxRequest -Method "POST" -RequestPath "/api/v5/trade/cancel-algos" -BodyJson $body -config $config
         if ($resp -and ($resp.code -eq "0" -or -not $resp.code)) {
-            Log "Cancel attach response OK" "OK"
+            Log "Cancel-algos response OK for $instId" "OK"
+            if ($DebugMode) { ($resp | ConvertTo-Json -Depth 6) | Write-Host }
             return $true
         } else {
-            Log "Cancel attach returned non-zero or unexpected response: $($resp | ConvertTo-Json -Depth 4)" "WARN"
+            Log "Cancel-algos returned non-ok (will try cancel-advance-algos): $($resp | ConvertTo-Json -Depth 4)" "WARN"
+        }
+    } catch {
+        Log "cancel-algos call failed: $($_.Exception.Message)" "WARN"
+    }
+
+    # fallback: cancel-advance-algos (covers Trailing Stop and other advanced algos)
+    try {
+        $resp2 = Send-OkxRequest -Method "POST" -RequestPath "/api/v5/trade/cancel-advance-algos" -BodyJson $body -config $config
+        if ($resp2 -and ($resp2.code -eq "0" -or -not $resp2.code)) {
+            Log "Cancel-advance-algos OK for $instId" "OK"
+            if ($DebugMode) { ($resp2 | ConvertTo-Json -Depth 6) | Write-Host }
+            return $true
+        } else {
+            Log "Cancel-advance-algos returned non-ok: $($resp2 | ConvertTo-Json -Depth 4)" "WARN"
             return $false
         }
     } catch {
-        Log "Cancel-AttachOrders exception: $($_.Exception.Message)" "ERROR"
+        Log "cancel-advance-algos call failed: $($_.Exception.Message)" "ERROR"
         return $false
     }
 }
@@ -435,61 +467,63 @@ function Cancel-AttachOrders {
 function Create-TrailingAttachForPosition {
     param(
         [string]$instId,
-        [string]$side,            # "buy" or "sell" (side of original open order)
+        [string]$side,            # "buy" or "sell" (closing side)
         [decimal]$tpPrice,       # activation price (use existing TP)
         [string]$sz,             # size string
         $config,
         [decimal]$deviationPct = 0.5
     )
 
-    # callbackRate обычно указывают в процентах (например 0.5) — это "отклонение"
-    $callbackRate = [math]::Round($deviationPct, 6)
+    # OKX expects callbackRatio as fraction: 0.01 = 1%. So convert percent -> fraction.
+    $callbackRatio = [decimal]($deviationPct / 100.0)
+    $callbackRatio = [math]::Round($callbackRatio, 6)
 
-    # Подготовим attach / algo объект для трейлинга.
-    # Поля ниже — best-effort. При необходимости адаптируйте к вашей версии OKX:
-    # - algoType / triggerPx / callbackRate / sz
-    # - у некоторых версий поле называется 'callback_rate' или 'trail' и т.д.
+    # ordType for trailing: move_order_stop
     $attachId = "trail" + [guid]::NewGuid().ToString("N").Substring(0,12)
-    $attachObj = @{
-        attachAlgoClOrdId = $attachId
-        algoType           = "trailing"           # <- возможно нужно "trail" или "stopTrail"
-        triggerPx          = ([string]$tpPrice)   # цена активации = прежний TP
-        callbackRate       = ([string]$callbackRate) # 0.5
-        sz                 = ([string]$sz)
-        # дополнительные параметры, если потребуются:
-        # side               = $side
-        # tdMode             = $config.mgnMode
-    }
 
-    $bodyObj = @{
+    # Prepare body for POST /api/v5/trade/order-algo
+    $algoBody = @{
         instId = $instId
-        algoOrder = $attachObj
+        tdMode = if ($config.mgnMode) { $config.mgnMode } else { "isolated" }
+        side   = $side
+        ordType = "move_order_stop"
+        sz = ([string]$sz)
+        callbackRatio = ([string]$callbackRatio)
+        activePx = ([string]$tpPrice)   # price to activate trailing (use TP)
+        algoClOrdId = $attachId
     }
 
-    $body = $bodyObj | ConvertTo-Json -Compress
-    Log "Creating trailing-attach for $instId $body" "DEBUG"
-
-    # В некоторых версиях OKX создание algos идет через "/api/v5/trade/order" с attachAlgoOrds в теле,
-    # либо через отдельный endpoint "/api/v5/trade/order-algo". Попробуйте оба варианта если первый не работает.
-    # Сначала пробуем отдельный endpoint:
-    $tryPaths = @("/api/v5/trade/order-algo", "/api/v5/trade/order") 
-
-    foreach ($p in $tryPaths) {
-        try {
-            $resp = Send-OkxRequest -Method "POST" -RequestPath $p -BodyJson $body -config $config
-            if ($resp -and ($resp.code -eq "0" -or -not $resp.code)) {
-                Log "Trailing attach created via $p" "OK"
-                return $true
-            } else {
-                Log "Create trailing attach via $p returned non-ok: $($resp | ConvertTo-Json -Depth 4)" "DEBUG"
-            }
-        } catch {
-            Log "Create-TrailingAttachForPosition via $p exception: $($_.Exception.Message)" "WARN"
+    # add posSide if contract + posMode hedged
+    if ($config.posMode) {
+        $pm = $config.posMode.ToString().ToLower()
+        if ($pm -like "*long*" -or $pm -like "*long_short*") {
+            $algoBody.posSide = if ($side -eq "sell") { "short" } else { "long" }
         }
     }
 
-    Log "Failed to create trailing attach for $instId" "ERROR"
-    return $false
+    $body = $algoBody | ConvertTo-Json -Compress
+    Log "Creating trailing-attach (order-algo) for $instId body: $body" "DEBUG"
+
+    try {
+        $resp = Send-OkxRequest -Method "POST" -RequestPath "/api/v5/trade/order-algo" -BodyJson $body -config $config
+        if (-not $resp) {
+            Log "Create trailing attach: no response" "ERROR"
+            return $false
+        }
+        # success code is "0" or resp.data may contain algoId
+        if ($resp.code -and $resp.code -ne "0") {
+            Log "Place algo (trailing) returned code=$($resp.code) msg=$($resp.msg)" "ERROR"
+            if ($DebugMode) { ($resp | ConvertTo-Json -Depth 6) | Write-Host }
+            return $false
+        } else {
+            Log "Placed trailing algo (order-algo) OK for $instId" "OK"
+            if ($DebugMode) { ($resp | ConvertTo-Json -Depth 6) | Write-Host }
+            return $true
+        }
+    } catch {
+        Log "Create-TrailingAttachForPosition exception: $($_.Exception.Message)" "ERROR"
+        return $false
+    }
 }
 
 function Convert-TpToTrailingForPosition {
