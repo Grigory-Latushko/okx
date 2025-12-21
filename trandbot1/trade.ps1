@@ -106,6 +106,169 @@ function Get-AccountConfig {
    param($config) Log "Получаем конфиг аккаунта (/api/v5/account/config)" "DEBUG"; $resp = Send-OkxRequest -Method "GET" -RequestPath "/api/v5/account/config" -BodyJson "" -config $config; if ($resp -and $resp.data -and $resp.data.Count -ge 1) { $d = $resp.data[0]; if ($d.psMode) { return $d.psMode }; if ($d.posMode) { return $d.posMode }; if ($d.positionMode) { return $d.positionMode }; return $resp.data }; return $null 
 }
 
+# ---------------- UT BOT (TradingView UT Bot Alerts) ----------------
+function Compute-HeikinAshi($candles) {
+    $n = $candles.Count
+    $haOpen = New-Object System.Collections.Generic.List[double]
+    $haClose = New-Object System.Collections.Generic.List[double]
+    $haHigh = New-Object System.Collections.Generic.List[double]
+    $haLow = New-Object System.Collections.Generic.List[double]
+
+    for ($i = 0; $i -lt $n; $i++) {
+        $c = $candles[$i]
+        $hc = ([double]($c.Open + $c.High + $c.Low + $c.Close) / 4.0)
+        if ($i -eq 0) {
+            $ho = ([double]($c.Open + $c.Close) / 2.0)
+        } else {
+            $ho = ([double](($haOpen[$i-1] + $haClose[$i-1]) / 2.0))
+        }
+        $hh = [Math]::Max($c.High, $ho, $hc)
+        $hl = [Math]::Min($c.Low,  $ho, $hc)
+
+        $haOpen.Add([double]$ho)
+        $haClose.Add([double]$hc)
+        $haHigh.Add([double]$hh)
+        $haLow.Add([double]$hl)
+    }
+
+    # return array of PSCustomObject candles with fields Open/High/Low/Close
+    $out = for ($i=0; $i -lt $n; $i++) {
+        [PSCustomObject]@{
+            Open = $haOpen[$i]
+            High = $haHigh[$i]
+            Low  = $haLow[$i]
+            Close= $haClose[$i]
+        }
+    }
+    return $out
+}
+
+function Compute-ATR-Full($candles, [int]$period) {
+    if ($candles.Count -le $period) { return @() }
+    $n = $candles.Count
+    $trs = New-Object System.Collections.Generic.List[double]
+    for ($i = 1; $i -lt $n; $i++) {
+        $high = [double]$candles[$i].High
+        $low  = [double]$candles[$i].Low
+        $prevClose = [double]$candles[$i-1].Close
+        $tr = [Math]::Max(($high - $low), [Math]::Max([Math]::Abs($high - $prevClose), [Math]::Abs($low - $prevClose)))
+        $trs.Add($tr)
+    }
+    if ($trs.Count -lt $period) { return @() }
+
+    $atrList = New-Object System.Collections.Generic.List[Nullable[double]]
+    # For alignment we will produce an array length = candles.Count with $null for first entries
+    for ($i = 0; $i -lt $period; $i++) { $atrList.Add($null) }
+
+    $initialSMA = ($trs[0..($period-1)] | Measure-Object -Sum).Sum / $period
+    $atrList.Add([double]$initialSMA)   # this corresponds to index = $period
+
+    $k = 2.0 / ($period + 1)
+    for ($i = $period; $i -lt $trs.Count; $i++) {
+        $prev = $atrList[$atrList.Count - 1].Value
+        $next = ($trs[$i] * $k + $prev * (1 - $k))
+        $atrList.Add([double]$next)
+    }
+
+    # Now atrList length = trs.Count + 1 = candles.Count
+    return ,($atrList)
+}
+
+function Get-UTSignals($candles, [double]$a = 1.0, [int]$atrPeriod = 10, [bool]$useHeikin = $false) {
+    # Returns PSCustomObject { Buy=bool; Sell=bool; BarBuy=bool; BarSell=bool; TrailingStops=[array]; PosSeries=[array] }
+
+    if ($candles.Count -lt ($atrPeriod + 3)) { return [PSCustomObject]@{ Buy=$false; Sell=$false; BarBuy=$false; BarSell=$false; TrailingStops=@(); Pos=@() } }
+
+    if ($useHeikin) { $hcandles = Compute-HeikinAshi $candles } else { $hcandles = $candles }
+
+    # src = close series
+    $src = $hcandles | ForEach-Object { [double]$_.Close }
+
+    # compute ATR aligned
+    $atrArr = Compute-ATR-Full $hcandles $atrPeriod
+    if (-not $atrArr -or $atrArr.Count -eq 0) { return [PSCustomObject]@{ Buy=$false; Sell=$false; BarBuy=$false; BarSell=$false; TrailingStops=@(); Pos=@() } }
+
+    $n = $src.Count
+    $trail = New-Object System.Collections.Generic.List[double]
+    $posSeries = New-Object System.Collections.Generic.List[int]
+
+    for ($i = 0; $i -lt $n; $i++) {
+        $prevTrail = if ($i -gt 0) { $trail[$i-1] } else { 0.0 }
+        $prevSrc   = if ($i -gt 0) { $src[$i-1] } else { $src[$i] }
+
+        # ATR for current bar — if null, fallback to last non-null or 0
+        $atrVal = $atrArr[$i]
+        if ($atrVal -eq $null) {
+            # find last non-null
+            for ($j = $i; $j -ge 0; $j--) {
+                if ($j -lt $atrArr.Count -and $atrArr[$j] -ne $null) { $atrVal = $atrArr[$j]; break }
+            }
+            if ($atrVal -eq $null) { $atrVal = 0.0 }
+        }
+        $nLoss = $a * [double]$atrVal
+
+        if ($i -eq 0) {
+            # initialize
+            $newTrail = if ($src[$i] -gt $prevTrail) { $src[$i] - $nLoss } else { $src[$i] + $nLoss }
+            $trail.Add([double]$newTrail)
+            $posSeries.Add(0)
+            continue
+        }
+
+        if (($src[$i] -gt $prevTrail) -and ($prevSrc -gt $prevTrail)) {
+            $newTrail = [Math]::Max($prevTrail, ($src[$i] - $nLoss))
+        } elseif (($src[$i] -lt $prevTrail) -and ($prevSrc -lt $prevTrail)) {
+            $newTrail = [Math]::Min($prevTrail, ($src[$i] + $nLoss))
+        } elseif ($src[$i] -gt $prevTrail) {
+            $newTrail = ($src[$i] - $nLoss)
+        } else {
+            $newTrail = ($src[$i] + $nLoss)
+        }
+        $trail.Add([double]$newTrail)
+
+        # pos logic
+        $prevPos = $posSeries[$i-1]
+        if (($prevSrc -lt $prevTrail) -and ($src[$i] -gt $prevTrail)) {
+            $posSeries.Add(1)
+        } elseif (($prevSrc -gt $prevTrail) -and ($src[$i] -lt $prevTrail)) {
+            $posSeries.Add(-1)
+        } else {
+            $posSeries.Add($prevPos)
+        }
+    }
+
+    # compute ema(src,1) — equals src but keep using Get-EMA for consistency
+    $emaArr = Get-EMA $src 1
+
+    # get last index
+    $idx = $n - 1
+    $idxPrev = $n - 2
+
+    $emaCurr = [double]$emaArr[$idx]
+    $emaPrev = [double]$emaArr[$idxPrev]
+    $trailCurr = [double]$trail[$idx]
+    $trailPrev = [double]$trail[$idxPrev]
+    $srcCurr = [double]$src[$idx]
+    $srcPrev = [double]$src[$idxPrev]
+
+    $above = ($emaPrev -lt $trailPrev) -and ($emaCurr -gt $trailCurr)
+    $below = ($emaPrev -gt $trailPrev) -and ($emaCurr -lt $trailCurr)
+
+    $buy = ($srcCurr -gt $trailCurr) -and $above
+    $sell = ($srcCurr -lt $trailCurr) -and $below
+    $barbuy = ($srcCurr -gt $trailCurr)
+    $barsell = ($srcCurr -lt $trailCurr)
+
+    return [PSCustomObject]@{
+        Buy = [bool]$buy
+        Sell = [bool]$sell
+        BarBuy = [bool]$barbuy
+        BarSell = [bool]$barsell
+        TrailingStops = ,($trail)
+        Pos = ,($posSeries)
+    }
+}
+
 # ---------------- apply leverage (isolated) ----------------
 function Set-IsolatedLeverage {
     param(
@@ -653,6 +816,13 @@ Log "Loaded config: $($configMasked | ConvertTo-Json -Depth 5)" "DEBUG"
 if (-not $config.api_key -or -not $config.secret_key -or -not $config.passphrase) { Log "api_key / secret_key / passphrase must be provided in config file" "ERROR"; exit 1 }
 if (-not $config.instruments -or $config.instruments.Count -eq 0) { Log "No instruments provided in config -> 'instruments' array" "ERROR"; exit 1 }
 
+# UT Bot options
+$use_ut_bot = if ($null -ne $config.use_ut_bot) { [bool]$config.use_ut_bot } else { $false }
+$ut_a = if ($null -ne $config.ut_a) { [decimal]$config.ut_a } else { 1.0 }
+$ut_atr_period = if ($null -ne $config.ut_atr_period) { [int]$config.ut_atr_period } else { 10 }
+$ut_heikin = if ($null -ne $config.ut_heikin) { [bool]$config.ut_heikin } else { $false }
+
+
 # ---------------- auth & time ----------------
 try {
     $timeResp = Send-OkxRequest -Method "GET" -RequestPath "/api/v5/public/time" -BodyJson "" -config $config
@@ -740,14 +910,36 @@ function Run-Bot {
         $atr_pct = ($atr / $price) * 100
         Write-Output "ATR%: $([math]::Round($atr_pct, 4)) %"
 
+        # ===== TradingView UT Bot signals (optional) =====
+        if ($use_ut_bot) {
+            $ut = Get-UTSignals -candles $candles -a $ut_a -atrPeriod $ut_atr_period -useHeikin $ut_heikin
+            Write-Output "UT signals: Buy=$($ut.Buy) Sell=$($ut.Sell) BarBuy=$($ut.BarBuy) BarSell=$($ut.BarSell)"
+            # Use UT signals as trade signals
+            $longSignal = $ut.Buy
+            $shortSignal = $ut.Sell
+        } else {
+            # ===== ТРЕЙД-СИГНАЛЫ (исходно по 3x RSI check) =====
+            $longSignal =
+                ($rsi6Prev -lt $rsi6_min) -and
+                ($rsi6Curr -lt $rsi6_min) -and
+                ($rsi6Live -lt $rsi6_min)
+
+            $shortSignal =
+                ($rsi6Prev -gt $rsi6_max) -and
+                ($rsi6Curr -gt $rsi6_max) -and
+                ($rsi6Live -gt $rsi6_max)
+        }
+
         # ===== ТРЕЙД-СИГНАЛЫ (3x RSI check) =====
 
         $longSignal =
+            $ut.Buy -and
             ($rsi6Prev -lt $rsi6_min) -and
             ($rsi6Curr -lt $rsi6_min) -and
             ($rsi6Live -lt $rsi6_min)
 
         $shortSignal =
+            $ut.Sell -and
             ($rsi6Prev -gt $rsi6_max) -and
             ($rsi6Curr -gt $rsi6_max) -and
             ($rsi6Live -gt $rsi6_max)
