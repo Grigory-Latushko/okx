@@ -8,4 +8,4 @@ Loop added. Can trade long
 TP SL ATR based
 Short trade added
 
-Четверной сигнал RSI. Вход только три свечи RSI + RSI LIVE в нужном диапазоне
+Четверной сигнал RSI. Вход три свечи RSI + RSI LIVE в нужном диапазоне

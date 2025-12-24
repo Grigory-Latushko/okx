@@ -1,6 +1,6 @@
 {
-  "api_key": "bc439495-b973-41c2-9459-a6a910657630",
-  "secret_key": "27C17221617DA90B7231958E47024A40",
+  "api_key": "8ab5269b-de8d-4ba9-9c34-4bd744c2bbb3",
+  "secret_key": "57870229B5AE2950D3639464873763CE",
   "passphrase": "1027933Aa!",
   "instruments": [
     "AAVE-USDT-SWAP",
@@ -10,6 +10,7 @@
     "ATOM-USDT-SWAP",
     "ARB-USDT-SWAP", 
     "AVAX-USDT-SWAP", 
+    "BCH-USDT-SWAP",
     "BNB-USDT-SWAP",
     "BTC-USDT-SWAP", 
     "CRO-USDT-SWAP",
@@ -32,8 +33,8 @@
     "XLM-USDT-SWAP",
     "XRP-USDT-SWAP"
   ],
-  "position_size_usd"     : 0.1,
-  "leverage"              : 50,
+  "position_size_usd"     : 2,
+  "leverage"              : 5,
   "set_leverage"          : true,
   "mgnMode"               : "isolated",
   "force_min_size"        : true,
@@ -45,7 +46,7 @@
   "allow_shorts"          : true,
 
   "tp_atr_multiplier" : 1,
-  "sl_atr_multiplier" : 1,
+  "sl_atr_multiplier" : 5,
   "stop_loss_pct"     : 0.02,
 
   "candle_limit"   : 120,
@@ -58,10 +59,5 @@
   "rsi30_min" : 45,
   "rsi6_max"  : 75,
   "rsi14_max" : 72,
-  "rsi30_max" : 55,
-
-  "use_ut_bot": true,
-  "ut_a": 1.0,
-  "ut_atr_period": 10,
-  "ut_heikin": false
+  "rsi30_max" : 55
 }
