@@ -11,7 +11,7 @@
  "APE-USDT-SWAP", "DYDX-USDT-SWAP", "JTO-USDT-SWAP", "SNX-USDT-SWAP", "AXS-USDT-SWAP", "MINA-USDT-SWAP", "ASTR-USDT-SWAP", "SUSHI-USDT-SWAP", "YGG-USDT-SWAP", 
  "WOO-USDT-SWAP"
   ],
-  "position_size_usd"     : 1,
+  "position_size_usd"     : 1.1,
   "leverage"              : 5,
   "set_leverage"          : true,
   "mgnMode"               : "isolated",
