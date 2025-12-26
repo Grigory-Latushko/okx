@@ -495,11 +495,13 @@ function Run-Bot {
         # ===== ТРЕЙД-СИГНАЛЫ (3x RSI check) =====
 
         $longSignal =
+            # $atr_pct   -gt $config.min_atr_pct -and
             ($rsi6Prev -lt $rsi6_min) -and
             ($rsi6Curr -lt $rsi6_min) -and
             ($rsi6Live -lt $rsi6_min)
 
         $shortSignal =
+            # $atr_pct   -gt $config.min_atr_pct -and
             ($rsi6Prev -gt $rsi6_max) -and
             ($rsi6Curr -gt $rsi6_max) -and
             ($rsi6Live -gt $rsi6_max)
