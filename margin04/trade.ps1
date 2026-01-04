@@ -618,36 +618,36 @@ function Run-Bot {
         }
 
         # === CLOSE LONG ===
-        # if ($sellSignal -and $hasLong) {
+        if ($sellSignal -and $hasLong) {
 
-        #     Log "UT SELL → closing LONG" "WARN"
+            Log "UT SELL → closing LONG" "WARN"
 
-        #     $info = Get-InstrumentInfo -instId $instId -config $config
-        #     $ctVal = if ($info.ctVal) { [decimal]$info.ctVal } else { 1 }
+            $info = Get-InstrumentInfo -instId $instId -config $config
+            $ctVal = if ($info.ctVal) { [decimal]$info.ctVal } else { 1 }
 
-        #     $szApi = [math]::Round($posSize * $ctVal, 8)
+            $szApi = [math]::Round($posSize * $ctVal, 8)
 
-        #     $closeObj = @{
-        #         instId = $instId
-        #         tdMode = $config.mgnMode
-        #         side   = "sell"
-        #         ordType = "market"
-        #         sz     = ([string]$szApi)
-        #         reduceOnly = $true
-        #     }
+            $closeObj = @{
+                instId = $instId
+                tdMode = $config.mgnMode
+                side   = "sell"
+                ordType = "market"
+                sz     = ([string]$szApi)
+                reduceOnly = $true
+            }
 
 
-        #     $resp = Send-OkxRequest -Method "POST" `
-        #         -RequestPath "/api/v5/trade/order" `
-        #         -BodyJson ($closeObj | ConvertTo-Json -Compress) `
-        #         -config $config
+            $resp = Send-OkxRequest -Method "POST" `
+                -RequestPath "/api/v5/trade/order" `
+                -BodyJson ($closeObj | ConvertTo-Json -Compress) `
+                -config $config
 
-        #     if ($resp) {
-        #         Log "LONG closed by UT SELL" "OK"
-        #     }
+            if ($resp) {
+                Log "LONG closed by UT SELL" "OK"
+            }
 
-        #     continue
-        # }
+            continue
+        }
             }
 
             Log "Done." "OK"

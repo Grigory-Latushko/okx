@@ -114,18 +114,25 @@ function Get-AccountConfig {
 }
 
 function Get-ActiveAlgoOrders {
-    param($instId, $config)
+    param(
+        [string]$instId,
+        [psobject]$config,
+        [string]$ordType = ""  # по умолчанию берем все типы
+    )
 
-    $resp = Send-OkxRequest `
-        -Method "GET" `
-        -RequestPath "/api/v5/trade/orders-algo-pending?instId=$instId" `
+    # Если указан ordType, добавляем параметр
+    if ($ordType) {
+        $path = "/api/v5/trade/orders-algo-pending?instId=$instId&ordType=$ordType"
+    } else {
+        $path = "/api/v5/trade/orders-algo-pending?instId=$instId"
+    }
+
+    $resp = Send-OkxRequest -Method "GET" `
+        -RequestPath $path `
         -BodyJson "" `
         -config $config
 
-    if ($resp -and $resp.data) {
-        return $resp.data
-    }
-    return @()
+    return $resp.data
 }
 
 function Cancel-AlgoOrder {
@@ -144,25 +151,20 @@ function Cancel-AlgoOrder {
 }
 
 function Place-StopLoss {
-    param(
-        $instId,
-        $slPrice,
-        $sz,
-        $config
-    )
+    param($instId, $slPrice, $sz, $config)
 
     $body = @{
-        instId     = $instId
-        tdMode     = $config.mgnMode
-        side       = "sell"
-        ordType    = "conditional"
-        sz         = ([string]$sz)
+        instId      = $instId
+        tdMode      = $config.mgnMode
+        ordType     = "conditional"
+        side        = "sell"      # 🔴 КРИТИЧНО
+        posSide     = "net"
+        sz          = ([string]$sz)
         slTriggerPx = ([string]$slPrice)
-        slOrdPx     = "-1"   # market
+        slOrdPx     = "-1"
     } | ConvertTo-Json -Compress
 
-    Send-OkxRequest `
-        -Method "POST" `
+    Send-OkxRequest -Method "POST" `
         -RequestPath "/api/v5/trade/order-algo" `
         -BodyJson $body `
         -config $config
@@ -570,77 +572,85 @@ function Run-Bot {
         # === CHECK EXISTING POSITION ===
         $hasLong = $false
         $posSize = 0
+        $position = $null
+        $info = Get-InstrumentInfo -instId $instId -config $config
 
         if ($authOk) {
-
             $positionsResp = Send-OkxRequest -Method "GET" `
                 -RequestPath "/api/v5/account/positions?instId=$instId" `
                 -BodyJson "" -config $config
 
-            if ($DebugMode) { Write-Host "Positions raw: $($positionsResp | ConvertTo-Json -Depth 6)" }
+            foreach ($p in $positionsResp.data) {
+                $side = ($p.posSide ?? "net").ToLower()
+                $posRaw = [decimal]$p.pos
+                $ctVal = [decimal]$info.ctVal
 
-            if ($positionsResp -and $positionsResp.data -and $positionsResp.data.Count -gt 0) {
-                foreach ($p in $positionsResp.data) {
-                    $side = if ($p.posSide) { $p.posSide.ToString().ToLower() } else { "net" }
-                    $posRaw = if ($p.pos) { [decimal]$p.pos } else { 0 }
-                    # write-Output "positionsResp.data" $positionsResp.data
+                $pos = $posRaw / $ctVal
 
-                    # Получаем ctVal из info (либо ставим 1)
-                    $info = Get-InstrumentInfo -instId $instId -config $config
-                    $ctVal = if ($info.ctVal) { [decimal]$info.ctVal } else { 1 }
-
-                    $pos = $posRaw / $ctVal
-
-                    if ($pos -gt 0 -and ($side -eq "long" -or $side -eq "net")) {
-                        $hasLong = $true
-                        $posSize = $pos
-                        Write-Output "Открытая позиция обнаружена: side=$side, size=$posSize"
-                        break
-                    }
+                if ($pos -gt 0 -and ($side -eq "long" -or $side -eq "net")) {
+                    $hasLong = $true
+                    $posSize = $pos
+                    $position = $p
+                    Write-Output "Открытая позиция: side=$side size=$posSize"
+                    break
                 }
-            }
-
-            if ($hasLong -and $buySignal) {
-                Log "Открытая LONG позиция уже есть для $instId — новая LONG не будет открыта" "WARN"
-                continue
             }
         }
 
         if ($hasLong) {
-            $entryPx = [decimal]$p.avgPx
+
+            $entryPx   = [decimal]$position.avgPx
             $currentPx = [decimal]$price
-            $atrDec = [decimal]$atr
+            $atrDec    = [decimal]$atr
 
-            $profitFromEntry = $currentPx - $entryPx
-            write-Output "Profit from entry: $profitFromEntry"
-            write-Output "atrDec: $atrDec"
+            $profit = $currentPx - $entryPx
+            Write-Output "Profit from entry: $profit"
 
-            # 👉 Старт трейлинга только если > 1 ATR
-            if ($profitFromEntry -gt $atrDec) {
+            $trailingOrders  = Get-ActiveAlgoOrders -instId $instId -config $config -ordType "move_order_stop"
+            write-output "Всего активных trailingOrders ордеров: $($trailingOrders.Count)"
 
-                $newSL = $currentPx - (0.5 * $atrDec)
-                $newSL = RoundPriceToTick $newSL $info.tickSz
+            # получить все conditional (старые SL)
+            $conditionalOrders = Get-ActiveAlgoOrders -instId $instId -config $config -ordType "conditional"
 
-                Log "Trailing check: entry=$entryPx current=$currentPx ATR=$atrDec newSL=$newSL" "DEBUG"
+            # старт трейлинга после минимального профита
+            if (($profit -ge $atrDec) -and ($trailingOrders.Count -eq 0)) {
+               
+                # новый трейлинг-стоп
+                $trailStopPrice = $currentPx - (0.5 * $atrDec)
+                $trailStopPrice = RoundPriceToTick $trailStopPrice $info.tickSz
 
-                # Получаем текущие SL ордера
-                $algos = Get-ActiveAlgoOrders -instId $instId -config $config
-                $existingSL = $algos | Where-Object { $_.slTriggerPx }
+                # размер позиции
+                $ctVal = [decimal]$info.ctVal
+                $szApi = [math]::Round($posSize * $ctVal, 8)
 
-                if ($existingSL) {
-                    $oldSL = [decimal]$existingSL[0].slTriggerPx
+                Write-Output "Placing/Updating trailing stop: $trailStopPrice for size $szApi"
 
-                    if ($newSL -gt $oldSL) {
-                        Log "Updating SL: old=$oldSL → new=$newSL" "WARN"
-                        Cancel-AlgoOrder -instId $instId -algoId $existingSL[0].algoId -config $config
-                        Place-StopLoss -instId $instId -slPrice $newSL -sz $szApi -config $config
-                    } else {
-                        Log "Trailing SL not improved (new <= old). Skip." "DEBUG"
-                    }
+                # создаём обычный стоп-ордeр (market SL)
+                # Половина ATR
+                $halfAtr = 0.5 * $atrDec
+
+                # callbackRatio = половина ATR относительно текущей цены
+                $callbackRatio = [math]::Round($halfAtr / $currentPx, 6)
+
+                $trailingOrder = @{
+                    instId = $instId
+                    tdMode = $config.mgnMode
+                    side = "sell"
+                    ordType = "move_order_stop"
+                    sz = ([string]$szApi)
+                    callbackRatio = ([string]$callbackRatio)
+                    activePx = ([string]$currentPx)
                 }
-                else {
-                    Log "No SL found → placing initial trailing SL $newSL" "WARN"
-                    Place-StopLoss -instId $instId -slPrice $newSL -sz $szApi -config $config
+
+                $resp = Send-OkxRequest -Method "POST" `
+                        -RequestPath "/api/v5/trade/order-algo" `
+                        -BodyJson ($trailingOrder | ConvertTo-Json -Compress) `
+                        -config $config
+
+                if ($resp.code -eq "0") {
+                    Log "Trailing stop placed: $currentPx for size $szApi" "OK"
+                } else {
+                    Log "Failed to place trailing stop: $($resp.msg)" "ERROR"
                 }
             }
         }
