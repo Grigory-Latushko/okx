@@ -59,7 +59,7 @@ function Send-OkxRequest {
 
   try {
     if ($Method.ToUpper() -eq "GET") { $resp = Invoke-RestMethod -Method Get -Uri $url -Headers $headers -ErrorAction Stop } else { $resp = Invoke-RestMethod -Method Post -Uri $url -Headers $headers -Body $BodyJson -ErrorAction Stop }
-    Log "HTTP OK for $RequestPath" "OK"
+    # Log "HTTP OK for $RequestPath" "OK"
     if ($DebugMode) { Log "Response:`n$($resp | ConvertTo-Json -Depth 8)" "DEBUG" }
     return $resp
   } catch {
@@ -89,7 +89,7 @@ function Get-Price {
 
     if ($resp.data -and $resp.data.Count -ge 1) {
         $p = [decimal]$resp.data[0].last
-        Log "Цена $instId = $p" "OK"
+        # Log "Цена $instId = $p" "OK"
         return $p
     }
 
@@ -626,7 +626,7 @@ function Run-Bot {
                 $ctVal = [decimal]$info.ctVal
                 $szApi = [math]::Round($posSize * $ctVal, 8)
 
-                Write-Output "Placing/Updating trailing stop: $trailStopPrice for size $szApi"
+                Write-Output "💸 Placing trailing stop: $trailStopPrice for size $szApi"
 
                 # создаём обычный стоп-ордeр (market SL)
                 # Половина ATR
