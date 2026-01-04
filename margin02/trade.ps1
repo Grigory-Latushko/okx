@@ -606,6 +606,9 @@ function Run-Bot {
             $profit = $currentPx - $entryPx
             Write-Output "Profit from entry: $profit"
 
+            $profitPct = [math]::Round(($profit / $entryPx) * 100, 2)
+            Write-Output "Profit %: $profitPct %"
+
             $trailingOrders  = Get-ActiveAlgoOrders -instId $instId -config $config -ordType "move_order_stop"
             write-output "Всего активных trailingOrders ордеров: $($trailingOrders.Count)"
 
@@ -657,73 +660,78 @@ function Run-Bot {
 
         ############ UT BOT SIGNALS ############
 
-        $ut = Get-UTBotSignals `
-                -candles $candles `
-                -atrPeriod $config.atrPeriod `
-                -atrMultiplier $config.ut_multiplier
+        if ($hasLong) {
+            Write-Output "There is an open LONG position  $instId"
+        } else {
+            Write-Output "No open LONG position for $instId"
 
-        if (-not $ut) {
-            Log "UT Bot calculation failed — skipping $instId" "WARN"
-            continue
-        }
+            $ut = Get-UTBotSignals `
+                    -candles $candles `
+                    -atrPeriod $config.atrPeriod `
+                    -atrMultiplier $config.ut_multiplier
 
-        Write-Output "UT Bot: ATR=$($ut.atr), TS=$($ut.trailingStop)"
-
-        # === UT BOT SIGNALS ===
-        $buySignal  = $ut.long
-        $sellSignal = $ut.short
-        if ($buySignal) { Write-Output "UT Bot generated BUY signal 📈" }
-        if ($sellSignal) { Write-Output "UT Bot generated SELL signal 📉" }
-
-        if (-not $buySignal -and -not $sellSignal) {
-            Log "No UT Bot signal — waiting" "DEBUG"
-            continue
-        }
-
-        $sz = Set-IsolatedLeverage `
-                -instId $instId `
-                -lever $config.leverage `
-                -config $config `
-                -posSide "long"
-
-        if (-not $sz) {
-            Log "Failed to calculate position size" "ERROR"
-            continue
-        }
-
-        # === OPEN LONG ===
-        if ($buySignal -and -not $hasLong) {
-
-            if (-not $sz -or $sz -le 0) {
-                Log "Invalid sz — cannot open LONG" "ERROR"
+            if (-not $ut) {
+                Log "UT Bot calculation failed — skipping $instId" "WARN"
                 continue
             }
 
-            Log "UT BUY → opening LONG" "OK"
-            write-output "sz=$sz" "DEBUG"
+            Write-Output "UT Bot: ATR=$($ut.atr), TS=$($ut.trailingStop)"
 
-            $orderObj = @{
-                instId = $instId
-                tdMode = $config.mgnMode
-                side   = "buy"
-                ordType = "market"
-                sz = ([string]$sz)
-                # posSide = "long"
+            # === UT BOT SIGNALS ===
+            $buySignal  = $ut.long
+            $sellSignal = $ut.short
+            if ($buySignal) { Write-Output "UT Bot generated BUY signal 📈" }
+            if ($sellSignal) { Write-Output "UT Bot generated SELL signal 📉" }
+
+            if (-not $buySignal -and -not $sellSignal) {
+                Log "No UT Bot signal — waiting" "DEBUG"
+                continue
             }
 
-            $resp = Send-OkxRequest -Method "POST" `
-                -RequestPath "/api/v5/trade/order" `
-                -BodyJson ($orderObj | ConvertTo-Json -Compress) `
-                -config $config
+            $sz = Set-IsolatedLeverage `
+                    -instId $instId `
+                    -lever $config.leverage `
+                    -config $config `
+                    -posSide "long"
 
-            if ($resp) {
-                Log "LONG opened by UT BUY" "OK"
-                write-output "Order response: $($resp | ConvertTo-Json -Depth 6)" "DEBUG"
+            if (-not $sz) {
+                Log "Failed to calculate position size" "ERROR"
+                continue
             }
 
-            continue
+            # === OPEN LONG ===
+            if ($buySignal -and -not $hasLong) {
+
+                if (-not $sz -or $sz -le 0) {
+                    Log "Invalid sz — cannot open LONG" "ERROR"
+                    continue
+                }
+
+                Log "UT BUY → opening LONG" "OK"
+                write-output "sz=$sz" "DEBUG"
+
+                $orderObj = @{
+                    instId = $instId
+                    tdMode = $config.mgnMode
+                    side   = "buy"
+                    ordType = "market"
+                    sz = ([string]$sz)
+                    # posSide = "long"
+                }
+
+                $resp = Send-OkxRequest -Method "POST" `
+                    -RequestPath "/api/v5/trade/order" `
+                    -BodyJson ($orderObj | ConvertTo-Json -Compress) `
+                    -config $config
+
+                if ($resp) {
+                    Log "LONG opened by UT BUY" "OK"
+                    write-output "Order response: $($resp | ConvertTo-Json -Depth 6)" "DEBUG"
+                }
+
+                continue
+            }
         }
-
         # === CLOSE LONG ===
         # if ($sellSignal -and $hasLong) {
         #     Log "UT SELL → closing LONG" "WARN"
