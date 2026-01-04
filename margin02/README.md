@@ -1,11 +1,7 @@
-TP added
-Check existing position added
-SL added
-EMA added. Not implemented
-EMA condition added
-RSI added
-Loop added. Can trade long
-TP SL ATR based
-Short trade added
+margin05
 
-Тройной сигнал RSI. Вход только две свечи RSI + RSI LIVE в нужном диапазоне
+Dynamic Swing Anchored VWAP (Zeiierman)
+LONG only
+
+UT Bot added
+SL added

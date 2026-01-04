@@ -68,6 +68,7 @@ function Send-OkxRequest {
     return $null
   }
 }
+
 function Get-Price { 
     param($instId, $config)
     Log "Получаем цену для $instId" "DEBUG"
@@ -98,12 +99,15 @@ function Get-Price {
 function Get-InstrumentInfo { 
     param($instId, $config) Log "Получаем информацию об инструменте $instId" "DEBUG"; $resp = Send-OkxRequest -Method "GET" -RequestPath "/api/v5/public/instruments?instType=SWAP&instId=$($instId)" -BodyJson "" -config $config; if ($resp -and $resp.data -and $resp.data.Count -ge 1) { return $resp.data[0] } return $null 
 }
+
 function Set-ToStep {
     param($value, $step) if ($step -eq 0 -or $null -eq $step) { return [math]::Round($value, 8) } $quotient = [math]::Floor(($value / $step) + 0.0000000001); $rounded = $quotient * $step; return [decimal]$([math]::Round([double]$rounded, 8)) 
 }
+
 function RoundPriceToTick { 
     param($price, $tick) if ($tick -eq 0 -or $null -eq $tick) { return [math]::Round($price, 8) } $q = [math]::Round($price / $tick, 8); $r = [math]::Round($q) * $tick; return [decimal]$([math]::Round([double]$r, 8)) 
 }
+
 function Get-AccountConfig { 
    param($config) Log "Получаем конфиг аккаунта (/api/v5/account/config)" "DEBUG"; $resp = Send-OkxRequest -Method "GET" -RequestPath "/api/v5/account/config" -BodyJson "" -config $config; if ($resp -and $resp.data -and $resp.data.Count -ge 1) { $d = $resp.data[0]; if ($d.psMode) { return $d.psMode }; if ($d.posMode) { return $d.posMode }; if ($d.positionMode) { return $d.positionMode }; return $resp.data }; return $null 
 }
@@ -380,22 +384,68 @@ function Get-ATR($candles, $period) {
     return $atr
 }
 
+function Get-UTBotSignals {
+    param(
+        [array]$candles,
+        [int]$atrPeriod = 10,
+        [decimal]$atrMultiplier = 1.0
+    )
+
+    if ($candles.Count -le ($atrPeriod + 2)) { return $null }
+
+    $closes = $candles | ForEach-Object { $_.Close }
+
+    # ATR
+    $atrArr = Get-ATR $candles $atrPeriod
+    if ($atrArr.Count -eq 0) { return $null }
+
+    $atr = [decimal]$atrArr[-1]
+    $nLoss = $atr * $atrMultiplier
+
+    # Trailing Stop array
+    $ts = @()
+    $ts += $closes[0]
+
+    for ($i = 1; $i -lt $closes.Count; $i++) {
+        $prevTS = $ts[$i - 1]
+        $price = $closes[$i]
+        $prevPrice = $closes[$i - 1]
+
+        if ($price -gt $prevTS -and $prevPrice -gt $prevTS) {
+            $ts += [Math]::Max($prevTS, $price - $nLoss)
+        }
+        elseif ($price -lt $prevTS -and $prevPrice -lt $prevTS) {
+            $ts += [Math]::Min($prevTS, $price + $nLoss)
+        }
+        elseif ($price -gt $prevTS) {
+            $ts += ($price - $nLoss)
+        }
+        else {
+            $ts += ($price + $nLoss)
+        }
+    }
+
+    # Последние 2 значения
+    $tsPrev   = $ts[-2]
+    $tsCurr   = $ts[-1]
+    $closePrev = $closes[-2]
+    $closeCurr = $closes[-1]
+
+    $longSignal  = ($closePrev -le $tsPrev) -and ($closeCurr -gt $tsCurr)
+    $shortSignal = ($closePrev -ge $tsPrev) -and ($closeCurr -lt $tsCurr)
+
+    return @{
+        atr = $atr
+        trailingStop = $tsCurr
+        long  = $longSignal
+        short = $shortSignal
+    }
+}
+
+
 # ---------------- main ----------------
 
 $config = Get-Content $configPath -Raw | ConvertFrom-Json
-
-# normalize/ensure some config defaults (including shorts support)
-$tp_atr_multiplier = if ($null -ne $config.tp_atr_multiplier) { [decimal]$config.tp_atr_multiplier } else { 1.0 }
-$sl_atr_multiplier = if ($null -ne $config.sl_atr_multiplier) { [decimal]$config.sl_atr_multiplier } else { 1.0 }
-
-# RSI thresholds (for long use *_max, for short use *_min). Provide sensible defaults.
-$rsi6_max       = if ($null -ne $config.rsi6_max)  { [decimal]$config.rsi6_max }  else { 75 }
-$rsi14_max      = if ($null -ne $config.rsi14_max) { [decimal]$config.rsi14_max } else { 70 }
-$rsi30_max      = if ($null -ne $config.rsi30_max) { [decimal]$config.rsi30_max } else { 60 }
-
-$rsi6_min       = if ($null -ne $config.rsi6_min)  { [decimal]$config.rsi6_min }  else { 25 }
-$rsi14_min      = if ($null -ne $config.rsi14_min) { [decimal]$config.rsi14_min } else { 30 }
-$rsi30_min      = if ($null -ne $config.rsi30_min) { [decimal]$config.rsi30_min } else { 40 }
 
 $allow_shorts = if ($null -ne $config.allow_shorts) { [bool]$config.allow_shorts } else { $false }
 
@@ -441,18 +491,6 @@ function Run-Bot {
 
         Start-Sleep -Seconds $config.rerun_interval_s
         
-        # проверка уже открытых позиций
-        if ($authOk) {
-            $positionsResp = Send-OkxRequest -Method "GET" -RequestPath "/api/v5/account/positions?instId=$instId" -BodyJson "" -config $config
-            if ($positionsResp -and $positionsResp.data -and $positionsResp.data.Count -gt 0) {
-                $openPos = $positionsResp.data | Where-Object { $_.pos -ne 0 }
-                if ($openPos.Count -gt 0) {
-                    Log "Открытая позиция уже существует для $instId, пропускаем" "WARN"
-                    continue
-                }
-            }
-        }
-
         $price = Get-Price -instId $instId -config $config
             Write-Output "Текущая цена: $price" 
         
@@ -462,27 +500,7 @@ function Run-Bot {
         if ($candles.Count -lt 2) { continue }   # минимум 2 свечи
 
         # закрытия свечей
-        $closes = $candles | ForEach-Object { $_.Close }
-
-        # массив закрытий без последней свечи
-        $closes_prev = $closes[0..($closes.Count - 2)]
-
-        # расчет RSI
-        $rsi6Arr       = Get-RSI $closes 6
-        $rsi6Arr_prev  = Get-RSI $closes_prev 6
-
-        # RSI последней и предпоследней свечи
-        $rsi6Curr = $rsi6Arr[-1]
-        $rsi6Prev = $rsi6Arr_prev[-1]
-
-        Write-Output "RSI6: prev=$rsi6Prev, curr=$rsi6Curr"
-
-        # ===== RSI LIVE (с учётом текущей цены) =====
-        $closes_live = $closes + $price    # добавляем текущую цену неформировавшейся свечи
-        $rsi6Arr_live = Get-RSI $closes_live 6
-        $rsi6Live = $rsi6Arr_live[-1]
-
-        Write-Output "RSI6 Live = $rsi6Live"
+        # $closes = $candles | ForEach-Object { $_.Close }
 
         # ===== ATR =====
         $atrArr = Get-ATR $candles $atrPeriod
@@ -492,154 +510,147 @@ function Run-Bot {
         $atr_pct = ($atr / $price) * 100
         Write-Output "ATR%: $([math]::Round($atr_pct, 4)) %"
 
-        # ===== ТРЕЙД-СИГНАЛЫ (3x RSI check) =====
+        # === CHECK EXISTING POSITION ===
+        $hasLong = $false
+        $posSize = 0
 
-        $longSignal =
-            # $atr_pct   -gt $config.min_atr_pct -and
-            ($rsi6Prev -lt $rsi6_min) -and
-            ($rsi6Curr -lt $rsi6_min) -and
-            ($rsi6Live -lt $rsi6_min)
-
-        $shortSignal =
-            # $atr_pct   -gt $config.min_atr_pct -and
-            ($rsi6Prev -gt $rsi6_max) -and
-            ($rsi6Curr -gt $rsi6_max) -and
-            ($rsi6Live -gt $rsi6_max)
-
-        if (-not $longSignal -and -not ($shortSignal -and $allow_shorts)) {
-            Log "No trading signal for $instId — skipping" "WARN"
-            continue
-        }
-
-        ##########################################################
-
-        # проверка уже открытых позиций
         if ($authOk) {
-            $positionsResp = Send-OkxRequest -Method "GET" -RequestPath "/api/v5/account/positions?instId=$instId" -BodyJson "" -config $config
-            if ($positionsResp -and $positionsResp.data -and $positionsResp.data.Count -gt 0) {
-                $openPos = $positionsResp.data | Where-Object { $_.pos -ne 0 }
-                if ($openPos.Count -gt 0) {
-                    Log "Открытая позиция уже существует для $instId, пропускаем" "WARN"
-                    continue
+
+            $positionsResp = Send-OkxRequest -Method "GET" `
+                -RequestPath "/api/v5/account/positions?instId=$instId" `
+                -BodyJson "" -config $config
+
+            if ($DebugMode) { Write-Host "Positions raw: $($positionsResp | ConvertTo-Json -Depth 6)" }
+
+        if ($positionsResp -and $positionsResp.data -and $positionsResp.data.Count -gt 0) {
+            foreach ($p in $positionsResp.data) {
+                $side = if ($p.posSide) { $p.posSide.ToString().ToLower() } else { "net" }
+                $posRaw = if ($p.pos) { [decimal]$p.pos } else { 0 }
+
+                # Получаем ctVal из info (либо ставим 1)
+                $info = Get-InstrumentInfo -instId $instId -config $config
+                $ctVal = if ($info.ctVal) { [decimal]$info.ctVal } else { 1 }
+
+                $pos = $posRaw / $ctVal
+
+                if ($pos -gt 0 -and ($side -eq "long" -or $side -eq "net")) {
+                    $hasLong = $true
+                    $posSize = $pos
+                    Write-Output "Открытая позиция обнаружена: side=$side, size=$posSize"
+                    break
                 }
             }
         }
-        
-        if ($null -eq $price) { Log "Skipping $instId — price not available" "WARN"; continue }
 
-        $info = Get-InstrumentInfo -instId $instId -config $config
-        $contractMode = $false; $ctVal = $null; $step = $null; $tick = $null
-        if ($info) {
-            if ($info.ctVal) { $ctVal = [decimal]$info.ctVal; $contractMode = $true }
-            if ($info.minSz) { $step = [decimal]$info.minSz } elseif ($info.lotSz) { $step = [decimal]$info.lotSz } elseif ($info.sz) { $step = [decimal]$info.sz }
-            if ($info.tickSz) { $tick = [decimal]$info.tickSz }
-            Log "Instrument meta: ctVal=$ctVal, step/minSz=$step, tickSz=$tick" "DEBUG"
-        }
-
-        $notional_desired = [decimal]($config.position_size_usd * $config.leverage)
-        Log "Desired notional = $notional_desired USD" "DEBUG"
-
-        if ($contractMode -and $null -ne $ctVal -and $ctVal -gt 0) {
-            $rawContracts = [decimal]($notional_desired / ($ctVal * $price))
-            if ($null -eq $step -or $step -le 0) { $step = 1 }
-            $sz = Set-ToStep -value $rawContracts -step $step
-            Log "rawContracts = $rawContracts, rounded contracts sz = $sz (contract step = $step)" "DEBUG"
-        } else {
-            $rawSize = [decimal]($notional_desired / $price)
-            if ($null -eq $step -or $step -le 0) { if ($price -gt 1000) { $step = 0.0001 } elseif ($price -lt 1) { $step = 0.01 } else { $step = 0.0001 } }
-            $sz = Set-ToStep -value $rawSize -step $step
-            Log "rawSize (coin qty) = $rawSize, rounded sz = $sz (coin step = $step)" "DEBUG"
-        }
-
-        if ($sz -le 0) {
-            if ($config.force_min_size -and $step -gt 0) {
-                if ($contractMode -and $null -ne $ctVal) { $notional_if_forced = [math]::Round(($step * $ctVal * $price), 8) } else { $notional_if_forced = [math]::Round(($step * $price), 8) }
-                $threshold = $config.force_threshold_factor
-                if ($notional_if_forced -gt ($notional_desired * $threshold)) { Log "Forcing minimal step would create notional $notional_if_forced USD > $threshold × desired. Skipping" "WARN"; continue }
-                Log "rawSize < step; forcing sz = step ($step). forced notional = $notional_if_forced USD" "WARN"
-                $sz = $step
-            } else { Log "After rounding sz = 0 and force_min_size is false -> skipping $instId" "WARN"; continue }
-        }
-
-        if ($contractMode -and $null -ne $ctVal) { $notional_actual = [math]::Round(($sz * $ctVal * $price), 8) } else { $notional_actual = [math]::Round(($sz * $price), 8) }
-        Log "Final: sz = $sz (step $step). notional_actual = $notional_actual USD" "INFO"
-
-        # ---------------- apply leverage ----------------
-        if ($config.set_leverage -and $config.leverage -gt 1) {
-            if (-not $authOk) {
-                Log "Skipping Set-IsolatedLeverage because earlier auth check failed" "WARN"
-            } else {
-                Log "Applying leverage $($config.leverage) for $instId" "INFO"
-                # pass posSide depending on trade direction (will default to 'long' inside function)
-                $posSideForLeverage = if ($longSignal) { "long" } elseif ($shortSignal) { "short" } else { "long" }
-                $setResp = Set-IsolatedLeverage -instId $instId -lever $config.leverage -config $config -posSide $posSideForLeverage
-                if ($null -eq $setResp) { Log "Failed to set leverage; skipping" "ERROR" } else { Log "Set-IsolatedLeverage response: $(ConvertTo-Json $setResp -Depth 5)" "INFO" }
+            if ($hasLong -and $buySignal) {
+                Log "Открытая LONG позиция уже есть для $instId — новая LONG не будет открыта" "WARN"
+                continue
             }
         }
 
-        # ---------------- place market order + attach TP/SL ----------------
-        $side = if ($longSignal) { "buy" } else { "sell" }
-        $orderObj = @{ instId = $instId; tdMode = $config.mgnMode; side = $side; ordType = "market"; sz = ([string]$sz) }
+        ############ UT BOT SIGNALS ############
 
-        if ($contractMode -and $null -ne $posMode) {
-            $pm = $posMode.ToString().ToLower()
-            if ($pm -like "*long*" -or $pm -like "*long_short*") { $orderObj.posSide = if ($side -eq "buy") { "long" } else { "short" }; Log "posMode=$posMode -> adding posSide='$($orderObj.posSide)' to order" "DEBUG" }
-        } elseif ($contractMode) { $orderObj.posSide = if ($side -eq "buy") { "long" } else { "short" }; Log "posMode unknown -> adding posSide for contract (conservative)" "DEBUG" }
+        $ut = Get-UTBotSignals `
+                -candles $candles `
+                -atrPeriod $config.atrPeriod `
+                -atrMultiplier $config.ut_multiplier
 
-        # ---------------- calculate TP & SL ----------------
-        $tpPct = $atr_pct * $tp_atr_multiplier / 100
-            write-Output "Take Profit % based on ATR: $([math]::Round($tpPct * 100, 4)) %"
-        $slPct = $atr_pct * $sl_atr_multiplier / 100
-            write-Output "Stop Loss % based on ATR: $([math]::Round($slPct * 100, 4)) %"
-        $estimatedEntry = $price
-
-        if ($side -eq "buy") {
-            # Long: TP above, SL below
-            $tpTriggerRaw = [decimal]($estimatedEntry * (1 + $tpPct))
-            $slTriggerRaw = [decimal]($estimatedEntry * (1 - $slPct))
-        } else {
-            # Short: TP below entry, SL above entry
-            $tpTriggerRaw = [decimal]($estimatedEntry * (1 - $tpPct))
-            $slTriggerRaw = [decimal]($estimatedEntry * (1 + $slPct))
-        }
-
-        if ($null -ne $tick -and $tick -gt 0) { $tpTrigger = RoundPriceToTick -price $tpTriggerRaw -tick $tick } else { $tpTrigger = [math]::Round($tpTriggerRaw, 8) }
-        if ($null -ne $tick -and $tick -gt 0) { $slTrigger = RoundPriceToTick -price $slTriggerRaw -tick $tick } else { $slTrigger = [math]::Round($slTriggerRaw, 8) }
-
-        $attachId = "tpsl" + [guid]::NewGuid().ToString("N").Substring(0,12)
-        $attachObj = @{
-            attachAlgoClOrdId = $attachId
-            tpTriggerPx        = ([string]$tpTrigger)
-            tpTriggerPxType    = $config.tp_trigger_type
-            tpOrdPx            = if ($config.tp_exec_market) { "-1" } else { ([string]$tpTrigger) }
-            slTriggerPx        = ([string]$slTrigger)
-            slTriggerPxType    = $config.tp_trigger_type
-            slOrdPx            = if ($config.tp_exec_market) { "-1" } else { ([string]$slTrigger) }
-            sz                 = ([string]$sz)
-        }
-
-        $orderObj.attachAlgoOrds = @($attachObj)
-
-        $orderJson = $orderObj | ConvertTo-Json -Depth 10 -Compress
-        Log "Open order with attachAlgoOrds (TP+SL): $orderJson" "DEBUG"
-
-        if (-not $authOk) { Log "Auth check earlier failed. Will not place real orders. (Use -ForceLive to override if you know what you're doing)" "WARN"; continue }
-
-        #-------- Сделка --------
-        $resp = Send-OkxRequest -Method "POST" -RequestPath "/api/v5/trade/order" -BodyJson $orderJson -config $config
-        if ($resp -and $resp.dryRun) {
-            Log "DRY RUN — order preview (attached TP+SL shown in preview)" "WARN"
-            ($resp | ConvertTo-Json -Depth 6) | Write-Host
-        } elseif ($null -eq $resp) {
-            Log "Order failed or empty response" "ERROR"
+        if (-not $ut) {
+            Log "UT Bot calculation failed — skipping $instId" "WARN"
             continue
-        } else {
-            Log "Order response:" "OK"
-            ($resp | ConvertTo-Json -Depth 8) | Write-Host
         }
-    }
 
-    Log "Done." "OK"
+        Write-Output "UT Bot: ATR=$($ut.atr), TS=$($ut.trailingStop)"
+        # === UT BOT SIGNALS ===
+        $buySignal  = $ut.long
+        $sellSignal = $ut.short
+        if ($buySignal) { Write-Output "UT Bot generated BUY signal 📈" }
+        if ($sellSignal) { Write-Output "UT Bot generated SELL signal 📉" }
+
+        if (-not $buySignal -and -not $sellSignal) {
+            Log "No UT Bot signal — waiting" "DEBUG"
+            continue
+        }
+
+        $sz = Set-IsolatedLeverage `
+                -instId $instId `
+                -lever $config.leverage `
+                -config $config `
+                -posSide "long"
+
+        if (-not $sz) {
+            Log "Failed to calculate position size" "ERROR"
+            continue
+        }
+
+
+        # === OPEN LONG ===
+        if ($buySignal -and -not $hasLong) {
+
+            if (-not $sz -or $sz -le 0) {
+                Log "Invalid sz — cannot open LONG" "ERROR"
+                continue
+            }
+
+            Log "UT BUY → opening LONG" "OK"
+            write-output "sz=$sz" "DEBUG"
+
+            $orderObj = @{
+                instId = $instId
+                tdMode = $config.mgnMode
+                side   = "buy"
+                ordType = "market"
+                sz = ([string]$sz)
+                # posSide = "long"
+            }
+
+            $resp = Send-OkxRequest -Method "POST" `
+                -RequestPath "/api/v5/trade/order" `
+                -BodyJson ($orderObj | ConvertTo-Json -Compress) `
+                -config $config
+
+            if ($resp) {
+                Log "LONG opened by UT BUY" "OK"
+                write-output "Order response: $($resp | ConvertTo-Json -Depth 6)" "DEBUG"
+            }
+
+            continue
+        }
+
+        # === CLOSE LONG ===
+        # if ($sellSignal -and $hasLong) {
+
+        #     Log "UT SELL → closing LONG" "WARN"
+
+        #     $info = Get-InstrumentInfo -instId $instId -config $config
+        #     $ctVal = if ($info.ctVal) { [decimal]$info.ctVal } else { 1 }
+
+        #     $szApi = [math]::Round($posSize * $ctVal, 8)
+
+        #     $closeObj = @{
+        #         instId = $instId
+        #         tdMode = $config.mgnMode
+        #         side   = "sell"
+        #         ordType = "market"
+        #         sz     = ([string]$szApi)
+        #         reduceOnly = $true
+        #     }
+
+
+        #     $resp = Send-OkxRequest -Method "POST" `
+        #         -RequestPath "/api/v5/trade/order" `
+        #         -BodyJson ($closeObj | ConvertTo-Json -Compress) `
+        #         -config $config
+
+        #     if ($resp) {
+        #         Log "LONG closed by UT SELL" "OK"
+        #     }
+
+        #     continue
+        # }
+            }
+
+            Log "Done." "OK"
 }
 
 while ($true) {

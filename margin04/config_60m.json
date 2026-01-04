@@ -43,7 +43,6 @@
   "simulated"             : false,
   "baseUrl"               : "https://www.okx.com",
   "rerun_interval_s"      : 0.5,
-  "allow_shorts"          : true,
 
   "min_atr_pct"      : 0.5,
   "tp_atr_multiplier" : 1.2,
@@ -53,12 +52,19 @@
   "candle_limit"   : 120,
   "candle_period"  : "1H",
   "higher_tf"      : "4H",
-  "atrPeriod"      : 48,
 
   "rsi6_min"  : 25,
   "rsi14_min" : 28,
   "rsi30_min" : 45,
   "rsi6_max"  : 75,
   "rsi14_max" : 72,
-  "rsi30_max" : 55
+  "rsi30_max" : 55,
+
+
+  "atrPeriod": 10,
+  "ut_multiplier": 1.0,
+  "allow_shorts": true,
+  "DebugMode": true
+
+
 }
