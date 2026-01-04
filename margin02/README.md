@@ -4,4 +4,4 @@ Dynamic Swing Anchored VWAP (Zeiierman)
 LONG only
 
 UT Bot added
-SL added
+Trailing stop added
