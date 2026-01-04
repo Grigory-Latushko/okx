@@ -1,4 +1,4 @@
-margin05
+margin04
 
 Dynamic Swing Anchored VWAP (Zeiierman)
 
