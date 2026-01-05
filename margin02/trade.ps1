@@ -18,7 +18,9 @@ function LogConsole($msg, $type = "INFO") {
     Write-Host "[$ts][$type] $msg"
 }
 function Mask { param([string]$s) if (-not $s) { return "" } if ($s.Length -le 8) { return $s.Substring(0,2) + "..." } return $s.Substring(0,4) + "..." + $s.Substring($s.Length-4,4) } 
+
 function Log { param([string]$msg, [string]$level = "INFO") switch ($level.ToUpper()) { "INFO"  { Write-Host "[INFO ] $msg" -ForegroundColor Gray } "OK"    { Write-Host "[ OK  ] $msg" -ForegroundColor Green } "WARN"  { Write-Host "[WARN ] $msg" -ForegroundColor Yellow } "ERROR" { Write-Host "[ERR  ] $msg" -ForegroundColor Red } "DEBUG" { if ($DebugMode) { Write-Host "[DBG  ] $msg" -ForegroundColor Cyan } } } }
+
 function Get-NowTimestamp { (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.fffZ") }
 
 function Set-OkxRequest {
@@ -342,13 +344,12 @@ function Set-IsolatedLeverage {
     }
 }
 
-#################### INDICATORS ####################
-
+################### INDICATORS ####################
 function Get-Candles($symbol, $limit, $period) {
     $cacheKey = "$symbol-$period-$limit"
     
     # Проверяем, есть ли в кэше и свежие ли данные
-    if ($global:candleCache.ContainsKey($cacheKey)) {
+        if ($global:candleCache.ContainsKey($cacheKey)) {
         $cached = $global:candleCache[$cacheKey]
         # $age = Get-Timestamp - $cached.Timestamp
         $age = (Get-Timestamp) - $cached.Timestamp
@@ -386,40 +387,7 @@ function Get-Candles($symbol, $limit, $period) {
         return @()
     }
 }
-function Get-EMA($prices, $period) {
-    if ($prices.Count -lt $period) { return @() }
-    $k = 2 / ($period + 1)
-    $ema = @($prices[0])
-    for ($i = 1; $i -lt $prices.Count; $i++) {
-        $ema += $prices[$i] * $k + $ema[$i-1] * (1 - $k)
-    }
-    return $ema
-}
-function Get-RSI([double[]]$prices, [int]$period=14) {
-    if (-not $prices -or $prices.Count -lt ($period + 1)) { return @() }
-    $gains = New-Object System.Collections.Generic.List[double]
-    $losses = New-Object System.Collections.Generic.List[double]
-    for ($i = 1; $i -lt $prices.Count; $i++) {
-        $change = $prices[$i] - $prices[$i-1]
-        if ($change -gt 0) { $gains.Add($change); $losses.Add(0.0) } else { $gains.Add(0.0); $losses.Add([Math]::Abs($change)) }
-    }
-    if ($gains.Count -lt $period) { return @() }
 
-    $avgGain = ($gains[0..($period-1)] | Measure-Object -Sum).Sum / $period
-    $avgLoss = ($losses[0..($period-1)] | Measure-Object -Sum).Sum / $period
-
-    $rsi = New-Object System.Collections.Generic.List[double]
-    $rs = if ($avgLoss -ne 0) { $avgGain / $avgLoss } else { [double]::PositiveInfinity }
-    $rsi.Add([Math]::Round(100 - (100 / (1 + $rs)), 2))
-
-    for ($i = $period; $i -lt $gains.Count; $i++) {
-        $avgGain = (($avgGain * ($period - 1)) + $gains[$i]) / $period
-        $avgLoss = (($avgLoss * ($period - 1)) + $losses[$i]) / $period
-        $rs = if ($avgLoss -ne 0) { $avgGain / $avgLoss } else { [double]::PositiveInfinity }
-        $rsi.Add([Math]::Round(100 - (100 / (1 + $rs)), 2))
-    }
-    return $rsi
-}
 function Get-ATR($candles, $period) {
     if (-not $candles -or $candles.Count -le $period) { return @() }
     $trs = @()
@@ -538,9 +506,7 @@ if ($authOk) {
 $candle_period     = $config.candle_period
 $candle_limit      = $config.candle_limit
 $atrPeriod         = $config.atrPeriod
-$tp_atr_multiplier = $tp_atr_multiplier
-$higher_tf         = $config.higher_tf
-
+$tp_atr_multiplier = $config.tp_atr_multiplier
 
 # #################### loop instruments ####################
 function Run-Bot {
@@ -567,7 +533,8 @@ function Run-Bot {
         $atr = $atrArr[-1]
         Write-Output "ATR($atrPeriod): $atr"
         $atr_pct = ($atr / $price) * 100
-        Write-Output "ATR%: $([math]::Round($atr_pct, 4)) %"
+        $atr_pct_rounded = $([math]::Round($atr_pct, 4))
+        Write-Output "ATR%: $atr_pct_rounded %"
 
         # === CHECK EXISTING POSITION ===
         $hasLong = $false
@@ -604,19 +571,27 @@ function Run-Bot {
             $atrDec    = [decimal]$atr
 
             $profit = $currentPx - $entryPx
-            Write-Output "Profit from entry: $profit"
+            # Write-Output "Profit from entry: $profit"
 
             $profitPct = [math]::Round(($profit / $entryPx) * 100, 2)
-            Write-Output "Profit %: $profitPct %"
+            Write-Output "Current Profit%: $profitPct %"
+
+            $targetProfit = $atr_pct_rounded * $tp_atr_multiplier
+            write-output "Target profit % $targetProfit"
+
+            $ProfitToDo = $targetProfit - $profitPct
+            write-output "🎯 Profit to target TP% $ProfitToDo%"
 
             $trailingOrders  = Get-ActiveAlgoOrders -instId $instId -config $config -ordType "move_order_stop"
-            write-output "Всего активных trailingOrders ордеров: $($trailingOrders.Count)"
+            if ($trailingOrders.Count -gt 0) {
+                Write-Output "✔️ Aктивных trailingOrders ордеров: $($trailingOrders.Count)"
+            }
 
             # получить все conditional (старые SL)
-            $conditionalOrders = Get-ActiveAlgoOrders -instId $instId -config $config -ordType "conditional"
+            # $conditionalOrders = Get-ActiveAlgoOrders -instId $instId -config $config -ordType "conditional"
 
             # старт трейлинга после минимального профита
-            if (($profit -ge $atrDec) -and ($trailingOrders.Count -eq 0)) {
+            if (($profit -ge ($atrDec*$tp_atr_multiplier)) -and ($trailingOrders.Count -eq 0)) {
                
                 # новый трейлинг-стоп
                 $trailStopPrice = $currentPx - (0.5 * $atrDec)
@@ -628,7 +603,6 @@ function Run-Bot {
 
                 Write-Output "💸 Placing trailing stop: $trailStopPrice for size $szApi"
 
-                # создаём обычный стоп-ордeр (market SL)
                 # Половина ATR
                 $halfAtr = 0.5 * $atrDec
 
@@ -661,7 +635,7 @@ function Run-Bot {
         ############ UT BOT SIGNALS ############
 
         if ($hasLong) {
-            Write-Output "There is an open LONG position  $instId"
+            Write-Output "🟢 There is an open LONG position  $instId"
         } else {
             Write-Output "No open LONG position for $instId"
 
@@ -680,8 +654,8 @@ function Run-Bot {
             # === UT BOT SIGNALS ===
             $buySignal  = $ut.long
             $sellSignal = $ut.short
-            if ($buySignal) { Write-Output "UT Bot generated BUY signal 📈" }
-            if ($sellSignal) { Write-Output "UT Bot generated SELL signal 📉" }
+            if ($buySignal) { Write-Output "📈 UT Bot generated BUY signal" }
+            if ($sellSignal) { Write-Output "📉 UT Bot generated SELL signal" }
 
             if (-not $buySignal -and -not $sellSignal) {
                 Log "No UT Bot signal — waiting" "DEBUG"
@@ -716,7 +690,6 @@ function Run-Bot {
                     side   = "buy"
                     ordType = "market"
                     sz = ([string]$sz)
-                    # posSide = "long"
                 }
 
                 $resp = Send-OkxRequest -Method "POST" `
@@ -733,32 +706,32 @@ function Run-Bot {
             }
         }
         # === CLOSE LONG ===
-        # if ($sellSignal -and $hasLong) {
-        #     Log "UT SELL → closing LONG" "WARN"
-        #     $info = Get-InstrumentInfo -instId $instId -config $config
-        #     $ctVal = if ($info.ctVal) { [decimal]$info.ctVal } else { 1 }
-        #     $szApi = [math]::Round($posSize * $ctVal, 8)
-        #     $closeObj = @{
-        #         instId = $instId
-        #         tdMode = $config.mgnMode
-        #         side   = "sell"
-        #         ordType = "market"
-        #         sz     = ([string]$szApi)
-        #         reduceOnly = $true
-        #     }
+        if ($sellSignal -and $hasLong) {
+            Log "UT SELL → closing LONG" "WARN"
+            $info = Get-InstrumentInfo -instId $instId -config $config
+            $ctVal = if ($info.ctVal) { [decimal]$info.ctVal } else { 1 }
+            $szApi = [math]::Round($posSize * $ctVal, 8)
+            $closeObj = @{
+                instId = $instId
+                tdMode = $config.mgnMode
+                side   = "sell"
+                ordType = "market"
+                sz     = ([string]$szApi)
+                reduceOnly = $true
+            }
 
-        #     $resp = Send-OkxRequest -Method "POST" `
-        #         -RequestPath "/api/v5/trade/order" `
-        #         -BodyJson ($closeObj | ConvertTo-Json -Compress) `
-        #         -config $config
+            $resp = Send-OkxRequest -Method "POST" `
+                -RequestPath "/api/v5/trade/order" `
+                -BodyJson ($closeObj | ConvertTo-Json -Compress) `
+                -config $config
 
-        #     if ($resp) {
-        #         Log "LONG closed by UT SELL" "OK"
-        #     }
-        #     continue
-        # }
+            if ($resp) {
+                Log "LONG closed by UT SELL" "OK"
+            }
+            continue
+        }
     }
-        Log "Done." "OK"
+        Log "Cycle done." "OK"
 }
 
 while ($true) {

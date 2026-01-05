@@ -580,10 +580,12 @@ function Run-Bot {
             write-output "Target profit % $targetProfit"
 
             $ProfitToDo = $targetProfit - $profitPct
-            write-output "Profit to target TP% $ProfitToDo %"
+            write-output "🎯 Profit to target TP% $ProfitToDo%"
 
             $trailingOrders  = Get-ActiveAlgoOrders -instId $instId -config $config -ordType "move_order_stop"
-            write-output "Всего активных trailingOrders ордеров: $($trailingOrders.Count)"
+            if ($trailingOrders.Count -gt 0) {
+                Write-Output "✔️ Aктивных trailingOrders ордеров: $($trailingOrders.Count)"
+            }
 
             # получить все conditional (старые SL)
             # $conditionalOrders = Get-ActiveAlgoOrders -instId $instId -config $config -ordType "conditional"
@@ -601,7 +603,6 @@ function Run-Bot {
 
                 Write-Output "💸 Placing trailing stop: $trailStopPrice for size $szApi"
 
-                # создаём обычный стоп-ордeр (market SL)
                 # Половина ATR
                 $halfAtr = 0.5 * $atrDec
 
@@ -634,7 +635,7 @@ function Run-Bot {
         ############ UT BOT SIGNALS ############
 
         if ($hasLong) {
-            Write-Output "There is an open LONG position  $instId"
+            Write-Output "🟢 There is an open LONG position  $instId"
         } else {
             Write-Output "No open LONG position for $instId"
 
@@ -653,8 +654,8 @@ function Run-Bot {
             # === UT BOT SIGNALS ===
             $buySignal  = $ut.long
             $sellSignal = $ut.short
-            if ($buySignal) { Write-Output "UT Bot generated BUY signal 📈" }
-            if ($sellSignal) { Write-Output "UT Bot generated SELL signal 📉" }
+            if ($buySignal) { Write-Output "📈 UT Bot generated BUY signal" }
+            if ($sellSignal) { Write-Output "📉 UT Bot generated SELL signal" }
 
             if (-not $buySignal -and -not $sellSignal) {
                 Log "No UT Bot signal — waiting" "DEBUG"
