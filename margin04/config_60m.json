@@ -33,8 +33,8 @@
     "XLM-USDT-SWAP",
     "XRP-USDT-SWAP"
   ],
-  "position_size_usd"     : 2,
-  "leverage"              : 6,
+  "position_size_usd"     : 1,
+  "leverage"              : 10,
   "set_leverage"          : true,
   "mgnMode"               : "isolated",
   "force_min_size"        : true,
@@ -45,7 +45,7 @@
   "rerun_interval_s"      : 0.5,
 
   "min_atr_pct"      : 0.5,
-  "tp_atr_multiplier" : 1.2,
+  "tp_atr_multiplier" : 2,
   "sl_atr_multiplier" : 5,
   "stop_loss_pct"     : 0.02,
 
