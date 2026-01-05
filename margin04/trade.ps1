@@ -733,7 +733,7 @@ function Run-Bot {
                 continue
             }
         }
-        === CLOSE LONG ===
+        # === CLOSE LONG ===
         if ($sellSignal -and $hasLong) {
             Log "UT SELL → closing LONG" "WARN"
             $info = Get-InstrumentInfo -instId $instId -config $config
