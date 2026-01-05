@@ -387,41 +387,6 @@ function Get-Candles($symbol, $limit, $period) {
         return @()
     }
 }
-# function Get-EMA($prices, $period) {
-#     if ($prices.Count -lt $period) { return @() }
-#     $k = 2 / ($period + 1)
-#     $ema = @($prices[0])
-#         for ($i = 1; $i -lt $prices.Count; $i++) {
-#             $ema += $prices[$i] * $k + $ema[$i-1] * (1 - $k)
-#         }
-#         return $ema
-# }
-
-# function Get-RSI([double[]]$prices, [int]$period=14) {
-#     if (-not $prices -or $prices.Count -lt ($period + 1)) { return @() }
-#         $gains = New-Object System.Collections.Generic.List[double]
-#         $losses = New-Object System.Collections.Generic.List[double]
-#         for ($i = 1; $i -lt $prices.Count; $i++) {
-#         $change = $prices[$i] - $prices[$i-1]
-#         if ($change -gt 0) { $gains.Add($change); $losses.Add(0.0) } else { $gains.Add(0.0); $losses.Add([Math]::Abs($change)) }
-#     }
-#     if ($gains.Count -lt $period) { return @() }
-
-#     $avgGain = ($gains[0..($period-1)] | Measure-Object -Sum).Sum / $period
-#     $avgLoss = ($losses[0..($period-1)] | Measure-Object -Sum).Sum / $period
-
-#     $rsi = New-Object System.Collections.Generic.List[double]
-#     $rs = if ($avgLoss -ne 0) { $avgGain / $avgLoss } else { [double]::PositiveInfinity }
-#     $rsi.Add([Math]::Round(100 - (100 / (1 + $rs)), 2))
-
-#     for ($i = $period; $i -lt $gains.Count; $i++) {
-#         $avgGain = (($avgGain * ($period - 1)) + $gains[$i]) / $period
-#         $avgLoss = (($avgLoss * ($period - 1)) + $losses[$i]) / $period
-#         $rs = if ($avgLoss -ne 0) { $avgGain / $avgLoss } else { [double]::PositiveInfinity }
-#         $rsi.Add([Math]::Round(100 - (100 / (1 + $rs)), 2))
-#     }
-#     return $rsi
-# }
 
 function Get-ATR($candles, $period) {
     if (-not $candles -or $candles.Count -le $period) { return @() }
@@ -717,7 +682,6 @@ function Run-Bot {
                     side   = "buy"
                     ordType = "market"
                     sz = ([string]$sz)
-                    # posSide = "long"
                 }
 
                 $resp = Send-OkxRequest -Method "POST" `
@@ -759,7 +723,7 @@ function Run-Bot {
             continue
         }
     }
-        Log "Done." "OK"
+        Log "Cycle done." "OK"
 }
 
 while ($true) {
