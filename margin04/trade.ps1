@@ -533,7 +533,8 @@ function Run-Bot {
         $atr = $atrArr[-1]
         Write-Output "ATR($atrPeriod): $atr"
         $atr_pct = ($atr / $price) * 100
-        Write-Output "ATR%: $([math]::Round($atr_pct, 4)) %"
+        $atr_pct_rounded = $([math]::Round($atr_pct, 4))
+        Write-Output "ATR%: $atr_pct_rounded %"
 
         # === CHECK EXISTING POSITION ===
         $hasLong = $false
@@ -570,10 +571,16 @@ function Run-Bot {
             $atrDec    = [decimal]$atr
 
             $profit = $currentPx - $entryPx
-            Write-Output "Profit from entry: $profit"
+            # Write-Output "Profit from entry: $profit"
 
             $profitPct = [math]::Round(($profit / $entryPx) * 100, 2)
-            Write-Output "Profit %: $profitPct %"
+            Write-Output "Current Profit%: $profitPct %"
+
+            $targetProfit = $atr_pct_rounded * $tp_atr_multiplier
+            write-output "Target profit % $targetProfit"
+
+            $ProfitToDo = $targetProfit - $profitPct
+            write-output "Profit to target TP% $ProfitToDo %"
 
             $trailingOrders  = Get-ActiveAlgoOrders -instId $instId -config $config -ordType "move_order_stop"
             write-output "Всего активных trailingOrders ордеров: $($trailingOrders.Count)"
