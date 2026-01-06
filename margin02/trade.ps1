@@ -884,6 +884,34 @@ function Run-Bot {
 
     }
         Log "Cycle done." "OK"
+        # ================= ACCOUNT BALANCE =================
+        if ($authOk) {
+
+            $balResp = Send-OkxRequest -Method "GET" `
+                -RequestPath "/api/v5/account/balance" `
+                -BodyJson "" `
+                -config $config
+
+            if ($balResp -and $balResp.code -eq "0") {
+
+                $acc = $balResp.data[0]
+                $usdt = $acc.details | Where-Object { $_.ccy -eq "USDT" }
+
+                Write-Host "`n===== ACCOUNT BALANCE =====" -ForegroundColor Cyan
+                Write-Host ("Total Equity: {0} USDT" -f $acc.totalEq) -ForegroundColor White
+
+                if ($usdt) {
+                    Write-Host ("USDT Available: {0}" -f $usdt.availBal) -ForegroundColor Green
+                    Write-Host ("USDT Equity   : {0}" -f $usdt.eq) -ForegroundColor White
+                    Write-Host ("USDT UPL      : {0}" -f $usdt.upl) -ForegroundColor Yellow
+                }
+
+                Write-Host "===========================`n" -ForegroundColor Cyan
+
+            } else {
+                Log "Failed to fetch account balance" "WARN"
+            }
+        }
 }
 
 while ($true) {

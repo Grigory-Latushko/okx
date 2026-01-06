@@ -1,7 +1,8 @@
 {
-  "api_key": "513015d6-b48b-44a5-a374-714e3a796ffd",
-  "secret_key": "606237C3319FBE636C02B04B67AB6B36",
+  "api_key": "8ab5269b-de8d-4ba9-9c34-4bd744c2bbb3",
+  "secret_key": "57870229B5AE2950D3639464873763CE",
   "passphrase": "1027933Aa!",
+
   "instruments": [
     "1INCH-USDT-SWAP",
     "AAVE-USDT-SWAP",
@@ -66,7 +67,7 @@
     "YGG-USDT-SWAP"
   ],
   "position_size_usd"     : 1,
-  "leverage"              : 15,
+  "leverage"              : 20,
   "set_leverage"          : true,
   "mgnMode"               : "isolated",
   "force_min_size"        : true,
@@ -77,7 +78,7 @@
   "rerun_interval_s"      : 0.5,
 
   "min_atr_pct"       : 0.5,
-  "tp_atr_multiplier" : 0.8,
+  "tp_atr_multiplier" : 0.75,
   "callback_atr_multiplier" : 0.1,
   "sl_atr_multiplier" : 5,
   "stop_loss_pct"     : 0.02,
