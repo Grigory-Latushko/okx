@@ -510,6 +510,7 @@ $tp_atr_multiplier = $config.tp_atr_multiplier
 $callback_atr_multiplier = $config.callback_atr_multiplier
 
 # #################### loop instruments ####################
+
 function Run-Bot {
     foreach ($instId in $config.instruments) {
         Write-Host "`n=== Processing $instId ===" -ForegroundColor White
@@ -616,10 +617,10 @@ function Run-Bot {
 
                 Write-Output "💸 Placing trailing stop: $trailStopPrice for size $szApi"
 
-                # Половина ATR
+                # callback ATR
                 $callback = $callback_atr_multiplier * $atrDec
 
-                # callbackRatio = половина ATR относительно текущей цены
+                # callbackRatio = callback ATR относительно текущей цены
                 $callbackRatio = [math]::Round($callback / $currentPx, 6)
 
                 $trailingOrder = @{
@@ -686,11 +687,11 @@ function Run-Bot {
 
                 Write-Output "💸 Placing trailing stop: $trailStopPrice for size $szApi"
 
-                # Половина ATR
-                $halfAtr = 0.5 * $atrDec
+                # callback ATR
+                $callback = $callback_atr_multiplier * $atrDec
 
-                # callbackRatio = половина ATR относительно текущей цены
-                $callbackRatio = [math]::Round($halfAtr / $currentPx, 6)
+                # callbackRatio = callback ATR относительно текущей цены
+                $callbackRatio = [math]::Round($callback / $currentPx, 6)
 
                 $trailingOrder = @{
                     instId = $instId
