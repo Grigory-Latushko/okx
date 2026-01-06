@@ -177,8 +177,8 @@ function Set-IsolatedLeverage {
     param(
         [string]$instId,
         [int]$lever,
-        $config
-        # [string]$posSide = "long"
+        $config,
+        [string]$posSide
     )
 
     Log "=== Set-IsolatedLeverage START for $instId lever=$lever posSide=$posSide ===" "DEBUG"
@@ -730,11 +730,17 @@ function Run-Bot {
         Write-Output "UT Bot: ATR=$($ut.atr), TS=$($ut.trailingStop)"
 
         if (($ut.long -or $ut.short) -and ($trailingOrders.Count -eq 0)) {
+            if ($ut.long) {
+                $posSide = "long"
+            }
+            if ($ut.short) {
+                $posSide = "short"
+            }
             $sz = Set-IsolatedLeverage `
                 -instId $instId `
                 -lever $config.leverage `
                 -config $config `
-                # -posSide "long"
+                -posSide $posSide
 
             if (-not $sz) {
                 Log "Failed to calculate position size" "ERROR"
