@@ -1,4 +1,4 @@
-# MARGIN 04
+# MARGIN 02
 
 param(
   [string]$ConfigPath = ".\config.json",
@@ -177,8 +177,8 @@ function Set-IsolatedLeverage {
     param(
         [string]$instId,
         [int]$lever,
-        $config
-        # [string]$posSide = "long"
+        $config,
+        [string]$posSide
     )
 
     Log "=== Set-IsolatedLeverage START for $instId lever=$lever posSide=$posSide ===" "DEBUG"
@@ -510,7 +510,6 @@ $tp_atr_multiplier = $config.tp_atr_multiplier
 $callback_atr_multiplier = $config.callback_atr_multiplier
 
 # #################### loop instruments ####################
-
 function Run-Bot {
     foreach ($instId in $config.instruments) {
         Write-Host "`n=== Processing $instId ===" -ForegroundColor White
@@ -613,14 +612,14 @@ function Run-Bot {
 
                 # размер позиции
                 $ctVal = [decimal]$info.ctVal
-                $szApi = [math]::Round($posSize * $ctVal, 8)
+                $szApi = [math]::Abs([math]::Round($posSize * $ctVal, 8))
 
                 Write-Output "💸 Placing trailing stop: $trailStopPrice for size $szApi"
 
-                # callback ATR
+                # ATR
                 $callback = $callback_atr_multiplier * $atrDec
 
-                # callbackRatio = callback ATR относительно текущей цены
+                # callbackRatio = половина ATR относительно текущей цены
                 $callbackRatio = [math]::Round($callback / $currentPx, 6)
 
                 $trailingOrder = @{
@@ -683,11 +682,10 @@ function Run-Bot {
 
                 # размер позиции
                 $ctVal = [decimal]$info.ctVal
-                $szApi = [math]::Round($posSize * $ctVal, 8)
+                $szApi = [math]::Abs([math]::Round($posSize * $ctVal, 8))
 
                 Write-Output "💸 Placing trailing stop: $trailStopPrice for size $szApi"
 
-                # callback ATR
                 $callback = $callback_atr_multiplier * $atrDec
 
                 # callbackRatio = callback ATR относительно текущей цены
@@ -696,7 +694,7 @@ function Run-Bot {
                 $trailingOrder = @{
                     instId = $instId
                     tdMode = $config.mgnMode
-                    side = "sell"
+                    side = "buy"
                     ordType = "move_order_stop"
                     sz = ([string]$szApi)
                     callbackRatio = ([string]$callbackRatio)
@@ -731,11 +729,17 @@ function Run-Bot {
         Write-Output "UT Bot: ATR=$($ut.atr), TS=$($ut.trailingStop)"
 
         if (($ut.long -or $ut.short) -and ($trailingOrders.Count -eq 0)) {
+            if ($ut.long) {
+                $posSide = "long"
+            }
+            if ($ut.short) {
+                $posSide = "short"
+            }
             $sz = Set-IsolatedLeverage `
                 -instId $instId `
                 -lever $config.leverage `
                 -config $config `
-                # -posSide "long"
+                -posSide $posSide
 
             if (-not $sz) {
                 Log "Failed to calculate position size" "ERROR"
@@ -913,7 +917,6 @@ function Run-Bot {
                 Log "Failed to fetch account balance" "WARN"
             }
         }
-
 }
 
 while ($true) {

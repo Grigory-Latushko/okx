@@ -612,14 +612,14 @@ function Run-Bot {
 
                 # размер позиции
                 $ctVal = [decimal]$info.ctVal
-                $szApi = [math]::Round($posSize * $ctVal, 8)
+                $szApi = [math]::Abs([math]::Round($posSize * $ctVal, 8))
 
                 Write-Output "💸 Placing trailing stop: $trailStopPrice for size $szApi"
 
-                # callback ATR
+                # ATR
                 $callback = $callback_atr_multiplier * $atrDec
 
-                # callbackRatio = callback ATR относительно текущей цены
+                # callbackRatio = половина ATR относительно текущей цены
                 $callbackRatio = [math]::Round($callback / $currentPx, 6)
 
                 $trailingOrder = @{
@@ -682,11 +682,10 @@ function Run-Bot {
 
                 # размер позиции
                 $ctVal = [decimal]$info.ctVal
-                $szApi = [math]::Round($posSize * $ctVal, 8)
+                $szApi = [math]::Abs([math]::Round($posSize * $ctVal, 8))
 
                 Write-Output "💸 Placing trailing stop: $trailStopPrice for size $szApi"
 
-                # callback ATR
                 $callback = $callback_atr_multiplier * $atrDec
 
                 # callbackRatio = callback ATR относительно текущей цены
@@ -695,7 +694,7 @@ function Run-Bot {
                 $trailingOrder = @{
                     instId = $instId
                     tdMode = $config.mgnMode
-                    side = "sell"
+                    side = "buy"
                     ordType = "move_order_stop"
                     sz = ([string]$szApi)
                     callbackRatio = ([string]$callbackRatio)
