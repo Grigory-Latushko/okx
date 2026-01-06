@@ -2,6 +2,6 @@ margin04
 
 Dynamic Swing Anchored VWAP (Zeiierman)
 
-LONG only
+LONG and Short
 UT Bot added
 trailing stop + SELL to stop
