@@ -1,4 +1,4 @@
-# MARGIN 05
+# MARGIN 04
 
 param(
   [string]$ConfigPath = ".\config.json",
@@ -152,33 +152,33 @@ function Cancel-AlgoOrder {
         -config $config
 }
 
-function Place-StopLoss {
-    param($instId, $slPrice, $sz, $config)
+# function Place-StopLoss {
+#     param($instId, $slPrice, $sz, $config)
 
-    $body = @{
-        instId      = $instId
-        tdMode      = $config.mgnMode
-        ordType     = "conditional"
-        side        = "sell"      # 🔴 КРИТИЧНО
-        posSide     = "net"
-        sz          = ([string]$sz)
-        slTriggerPx = ([string]$slPrice)
-        slOrdPx     = "-1"
-    } | ConvertTo-Json -Compress
+#     $body = @{
+#         instId      = $instId
+#         tdMode      = $config.mgnMode
+#         ordType     = "conditional"
+#         side        = "sell"      # 🔴 КРИТИЧНО
+#         posSide     = "net"
+#         sz          = ([string]$sz)
+#         slTriggerPx = ([string]$slPrice)
+#         slOrdPx     = "-1"
+#     } | ConvertTo-Json -Compress
 
-    Send-OkxRequest -Method "POST" `
-        -RequestPath "/api/v5/trade/order-algo" `
-        -BodyJson $body `
-        -config $config
-}
+#     Send-OkxRequest -Method "POST" `
+#         -RequestPath "/api/v5/trade/order-algo" `
+#         -BodyJson $body `
+#         -config $config
+# }
 
 # ---------------- apply leverage (isolated) ----------------
 function Set-IsolatedLeverage {
     param(
         [string]$instId,
         [int]$lever,
-        $config,
-        [string]$posSide = "long"
+        $config
+        # [string]$posSide = "long"
     )
 
     Log "=== Set-IsolatedLeverage START for $instId lever=$lever posSide=$posSide ===" "DEBUG"
@@ -507,6 +507,7 @@ $candle_period     = $config.candle_period
 $candle_limit      = $config.candle_limit
 $atrPeriod         = $config.atrPeriod
 $tp_atr_multiplier = $config.tp_atr_multiplier
+$callback_atr_multiplier = $config.callback_atr_multiplier
 
 # #################### loop instruments ####################
 function Run-Bot {
@@ -591,7 +592,7 @@ function Run-Bot {
             write-output "Target profit % $targetProfit"
 
             $ProfitToDo = $targetProfit - $profitPct
-            write-output "🎯 Profit to target TP% $ProfitToDo%"
+            write-output "🎯 Profit to target TP% 🚀 $ProfitToDo%"
 
             $trailingOrders  = Get-ActiveAlgoOrders -instId $instId -config $config -ordType "move_order_stop"
             if ($trailingOrders.Count -gt 0) {
@@ -616,10 +617,10 @@ function Run-Bot {
                 Write-Output "💸 Placing trailing stop: $trailStopPrice for size $szApi"
 
                 # Половина ATR
-                $halfAtr = 0.5 * $atrDec
+                $callback = $callback_atr_multiplier * $atrDec
 
                 # callbackRatio = половина ATR относительно текущей цены
-                $callbackRatio = [math]::Round($halfAtr / $currentPx, 6)
+                $callbackRatio = [math]::Round($callback / $currentPx, 6)
 
                 $trailingOrder = @{
                     instId = $instId
@@ -662,7 +663,7 @@ function Run-Bot {
             write-output "Target profit % $targetProfit"
 
             $ProfitToDo = $targetProfit - $profitPct
-            write-output "🎯 Profit to target TP% $ProfitToDo%"
+            write-output "🎯 Profit to target TP% 🚀 $ProfitToDo%"
 
             $trailingOrders  = Get-ActiveAlgoOrders -instId $instId -config $config -ordType "move_order_stop"
             if ($trailingOrders.Count -gt 0) {
@@ -728,12 +729,12 @@ function Run-Bot {
 
         Write-Output "UT Bot: ATR=$($ut.atr), TS=$($ut.trailingStop)"
 
-        if ($ut.long -or $ut.short) {
+        if (($ut.long -or $ut.short) -and ($trailingOrders.Count -eq 0)) {
             $sz = Set-IsolatedLeverage `
                 -instId $instId `
                 -lever $config.leverage `
                 -config $config `
-                -posSide "long"
+                # -posSide "long"
 
             if (-not $sz) {
                 Log "Failed to calculate position size" "ERROR"

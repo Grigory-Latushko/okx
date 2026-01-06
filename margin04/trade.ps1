@@ -580,7 +580,7 @@ function Run-Bot {
             write-output "Target profit % $targetProfit"
 
             $ProfitToDo = $targetProfit - $profitPct
-            write-output "🎯 Profit to target TP% $ProfitToDo%"
+            write-output "🎯 Profit to target TP% 🚀 $ProfitToDo%"
 
             $trailingOrders  = Get-ActiveAlgoOrders -instId $instId -config $config -ordType "move_order_stop"
             if ($trailingOrders.Count -gt 0) {
