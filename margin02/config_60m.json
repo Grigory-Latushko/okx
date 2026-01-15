@@ -79,13 +79,14 @@
   "dryRun"                : false,
   "simulated"             : false,
   "baseUrl"               : "https://www.okx.com",
-  "rerun_interval_s"      : 0.5,
+  "rerun_interval_s"      : 0.1,
 
   "min_atr_pct"       : 0.5,
-  "tp_atr_multiplier" : 0.75,
-  "callback_atr_multiplier" : 0.1,
-  "sl_atr_multiplier" : 5,
-  "stop_loss_pct"     : 0.02,
+
+  "tp_atr_multiplier"          : 1.75,
+  "callback_atr_multiplier"    : 0.25,
+  "sl_atr_multiplier"          : 3,
+  "callback_sl_atr_multiplier" : 0.5,
 
   "candle_limit"   : 120,
   "candle_period"  : "1H",
