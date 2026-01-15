@@ -2,6 +2,7 @@
   "api_key": "513015d6-b48b-44a5-a374-714e3a796ffd",
   "secret_key": "606237C3319FBE636C02B04B67AB6B36",
   "passphrase": "1027933Aa!",
+
   "instruments": [
     "1INCH-USDT-SWAP",
     "AAVE-USDT-SWAP",
@@ -77,12 +78,15 @@
   "dryRun"                : false,
   "simulated"             : false,
   "baseUrl"               : "https://www.okx.com",
-  "rerun_interval_s"      : 0.5,
+  "rerun_interval_s"      : 0.1,
 
   "min_atr_pct"       : 0.5,
-  "tp_atr_multiplier" : 1,
-  "callback_atr_multiplier" : 0.2,
-  "sl_atr_multiplier" : 5,
+
+  "tp_atr_multiplier"          : 0.6,
+  "callback_atr_multiplier"    : 0.1,
+  "sl_atr_multiplier"          : 2,
+  "callback_sl_atr_multiplier" : 0.3,
+
   "stop_loss_pct"     : 0.02,
 
   "candle_limit"   : 120,
