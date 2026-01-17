@@ -3,7 +3,6 @@
   "secret_key": "57870229B5AE2950D3639464873763CE",
   "passphrase": "1027933Aa!",
   "account"   : "Margin02",
-
   "instruments": [
     "1INCH-USDT-SWAP",
     "AAVE-USDT-SWAP",
@@ -70,8 +69,9 @@
     "XTZ-USDT-SWAP",
     "YGG-USDT-SWAP"
   ],
+
   "position_size_usd"     : 1,
-  "leverage"              : 20,
+  "leverage"              : 10,
   "set_leverage"          : true,
   "mgnMode"               : "isolated",
   "force_min_size"        : true,
@@ -83,27 +83,20 @@
 
   "min_atr_pct"       : 0.5,
 
-  "tp_atr_multiplier"          : 1.75,
-  "callback_atr_multiplier"    : 0.25,
-  "sl_atr_multiplier"          : 3,
-  "callback_sl_atr_multiplier" : 0.5,
+  "tp_atr_multiplier"          : 1,
+  "callback_atr_multiplier"    : 0.2,
+  "sl_atr_multiplier"          : 0.5,
+  "callback_sl_atr_multiplier" : 0.1,
+
+  "stop_loss_pct"     : 0.02,
 
   "candle_limit"   : 120,
   "candle_period"  : "1H",
   "higher_tf"      : "4H",
 
-  "rsi6_min"  : 25,
-  "rsi14_min" : 28,
-  "rsi30_min" : 45,
-  "rsi6_max"  : 75,
-  "rsi14_max" : 72,
-  "rsi30_max" : 55,
-
-
   "atrPeriod": 10,
   "ut_multiplier": 1.0,
   "allow_shorts": true,
   "DebugMode": true
-
 
 }

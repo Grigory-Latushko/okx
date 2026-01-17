@@ -847,27 +847,27 @@ function Run-Bot {
             continue
         }
 
-        if ($hasLong) {
-            Write-Output "📥 There is already an open LONG position  $instId"
+        if ($hasShort) {
+            Write-Output "📥 There is already an open SHORT position  $instId"
 
         } else {
-            Write-Output "No open LONG position for $instId"
+            Write-Output "No open SHORT position for $instId"
 
             # === OPEN LONG ===
             if ($buySignal -and (-not $hasShort) -and (-not $hasLong)) {
 
                 if (-not $sz -or $sz -le 0) {
-                    Log "Invalid sz — cannot open LONG" "ERROR"
+                    Log "Invalid sz — cannot open SHORT" "ERROR"
                     continue
                 }
 
-                Log "UT BUY → opening LONG" "OK"
+                Log "UT BUY → opening SHORT" "OK"
                 write-output "sz=$sz" "DEBUG"
 
                 $orderObj = @{
                     instId = $instId
                     tdMode = $config.mgnMode
-                    side   = "buy"
+                    side   = "sell"
                     ordType = "market"
                     sz = ([string]$sz)
                 }
@@ -878,7 +878,7 @@ function Run-Bot {
                     -config $config
 
                 if ($resp) {
-                    Log "LONG opened by UT BUY" "OK"
+                    Log "SHORT opened by UT BUY" "OK"
                     write-output "Order response: $($resp | ConvertTo-Json -Depth 6)" "DEBUG"
                 }
 
@@ -886,28 +886,27 @@ function Run-Bot {
             }
         }
         
-        if ($hasShort) {
-            Write-Output "📥 There is already an open SHORT position  $instId"
-
+        if ($hasLong) {
+            Write-Output "📥 There is already an open LONG position  $instId"
 
         } else {
-            Write-Output "No open SHORT position for $instId"
+            Write-Output "No open LONG position for $instId"
 
-            # === OPEN SHORT ===
+            # === OPEN LONG ===
             if ($sellSignal -and (-not $hasShort) -and (-not $hasLong)) {
 
                 if (-not $sz -or $sz -le 0) {
-                    Log "Invalid sz — cannot open SHORT" "ERROR"
+                    Log "Invalid sz — cannot open LONG" "ERROR"
                     continue
                 }
 
-                Log "UT SELL → opening SHORT" "OK"
+                Log "UT SELL → opening LONG" "OK"
                 write-output "sz=$sz" "DEBUG"
 
                 $orderObj = @{
                     instId = $instId
                     tdMode = $config.mgnMode
-                    side   = "sell"
+                    side   = "buy"
                     ordType = "market"
                     sz = ([string]$sz)
                 }
