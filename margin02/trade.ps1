@@ -597,6 +597,7 @@ function Run-Bot {
             write-output "🎯 Profit to target TP% 🚀 $ProfitToDo%"
 
             $trailingOrders  = Get-ActiveAlgoOrders -instId $instId -config $config -ordType "move_order_stop"
+            Write-Output "TrailingOrders  $($trailingOrders.side)"
             if ($trailingOrders.Count -gt 0) {
                 Write-Output "✔️ Aктивных trailingOrders ордеров: $($trailingOrders.Count)"
             }
@@ -881,7 +882,6 @@ function Run-Bot {
                     Log "SHORT opened by UT BUY" "OK"
                     write-output "Order response: $($resp | ConvertTo-Json -Depth 6)" "DEBUG"
                 }
-
                 continue
             }
         }
@@ -920,11 +920,9 @@ function Run-Bot {
                     Log "SHORT opened by UT SELL" "OK"
                     write-output "Order response: $($resp | ConvertTo-Json -Depth 6)" "DEBUG"
                 }
-
                 continue
             }
         }
-
     }
         Log "Cycle done." "OK"
         # ================= ACCOUNT BALANCE =================

@@ -1,4 +1,4 @@
-# MARGIN 01
+# MARGIN 02
 
 param(
   [string]$ConfigPath = ".\config.json",
@@ -18,7 +18,9 @@ function LogConsole($msg, $type = "INFO") {
     Write-Host "[$ts][$type] $msg"
 }
 function Mask { param([string]$s) if (-not $s) { return "" } if ($s.Length -le 8) { return $s.Substring(0,2) + "..." } return $s.Substring(0,4) + "..." + $s.Substring($s.Length-4,4) } 
+
 function Log { param([string]$msg, [string]$level = "INFO") switch ($level.ToUpper()) { "INFO"  { Write-Host "[INFO ] $msg" -ForegroundColor Gray } "OK"    { Write-Host "[ OK  ] $msg" -ForegroundColor Green } "WARN"  { Write-Host "[WARN ] $msg" -ForegroundColor Yellow } "ERROR" { Write-Host "[ERR  ] $msg" -ForegroundColor Red } "DEBUG" { if ($DebugMode) { Write-Host "[DBG  ] $msg" -ForegroundColor Cyan } } } }
+
 function Get-NowTimestamp { (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.fffZ") }
 
 function Set-OkxRequest {
@@ -32,6 +34,7 @@ function Set-OkxRequest {
   if ($DebugMode) { Log "prehash: $prehash" "DEBUG"; Log "signature: $sig" "DEBUG" }
   return $sig
 }
+
 function Send-OkxRequest {
   param([string]$Method, [string]$RequestPath, [string]$BodyJson, $config)
 
@@ -58,7 +61,7 @@ function Send-OkxRequest {
 
   try {
     if ($Method.ToUpper() -eq "GET") { $resp = Invoke-RestMethod -Method Get -Uri $url -Headers $headers -ErrorAction Stop } else { $resp = Invoke-RestMethod -Method Post -Uri $url -Headers $headers -Body $BodyJson -ErrorAction Stop }
-    Log "HTTP OK for $RequestPath" "OK"
+    # Log "HTTP OK for $RequestPath" "OK"
     if ($DebugMode) { Log "Response:`n$($resp | ConvertTo-Json -Depth 8)" "DEBUG" }
     return $resp
   } catch {
@@ -68,6 +71,7 @@ function Send-OkxRequest {
     return $null
   }
 }
+
 function Get-Price { 
     param($instId, $config)
     Log "Получаем цену для $instId" "DEBUG"
@@ -87,7 +91,7 @@ function Get-Price {
 
     if ($resp.data -and $resp.data.Count -ge 1) {
         $p = [decimal]$resp.data[0].last
-        Log "Цена $instId = $p" "OK"
+        # Log "Цена $instId = $p" "OK"
         return $p
     }
 
@@ -98,23 +102,83 @@ function Get-Price {
 function Get-InstrumentInfo { 
     param($instId, $config) Log "Получаем информацию об инструменте $instId" "DEBUG"; $resp = Send-OkxRequest -Method "GET" -RequestPath "/api/v5/public/instruments?instType=SWAP&instId=$($instId)" -BodyJson "" -config $config; if ($resp -and $resp.data -and $resp.data.Count -ge 1) { return $resp.data[0] } return $null 
 }
+
 function Set-ToStep {
     param($value, $step) if ($step -eq 0 -or $null -eq $step) { return [math]::Round($value, 8) } $quotient = [math]::Floor(($value / $step) + 0.0000000001); $rounded = $quotient * $step; return [decimal]$([math]::Round([double]$rounded, 8)) 
 }
+
 function RoundPriceToTick { 
     param($price, $tick) if ($tick -eq 0 -or $null -eq $tick) { return [math]::Round($price, 8) } $q = [math]::Round($price / $tick, 8); $r = [math]::Round($q) * $tick; return [decimal]$([math]::Round([double]$r, 8)) 
 }
+
 function Get-AccountConfig { 
    param($config) Log "Получаем конфиг аккаунта (/api/v5/account/config)" "DEBUG"; $resp = Send-OkxRequest -Method "GET" -RequestPath "/api/v5/account/config" -BodyJson "" -config $config; if ($resp -and $resp.data -and $resp.data.Count -ge 1) { $d = $resp.data[0]; if ($d.psMode) { return $d.psMode }; if ($d.posMode) { return $d.posMode }; if ($d.positionMode) { return $d.positionMode }; return $resp.data }; return $null 
 }
 
+function Get-ActiveAlgoOrders {
+    param(
+        [string]$instId,
+        [psobject]$config,
+        [string]$ordType = ""  # по умолчанию берем все типы
+    )
+
+    # Если указан ordType, добавляем параметр
+    if ($ordType) {
+        $path = "/api/v5/trade/orders-algo-pending?instId=$instId&ordType=$ordType"
+    } else {
+        $path = "/api/v5/trade/orders-algo-pending?instId=$instId"
+    }
+
+    $resp = Send-OkxRequest -Method "GET" `
+        -RequestPath $path `
+        -BodyJson "" `
+        -config $config
+
+    return $resp.data
+}
+function Cancel-AlgoOrder {
+    param($instId, $algoId, $config)
+
+    $body = @{
+        instId = $instId
+        algoId = $algoId
+    } | ConvertTo-Json -Compress
+
+    Send-OkxRequest `
+        -Method "POST" `
+        -RequestPath "/api/v5/trade/cancel-algos" `
+        -BodyJson $body `
+        -config $config
+}
+
+# function Place-StopLoss {
+#     param($instId, $slPrice, $sz, $config)
+
+#     $body = @{
+#         instId      = $instId
+#         tdMode      = $config.mgnMode
+#         ordType     = "conditional"
+#         side        = "sell"      # 🔴 КРИТИЧНО
+#         posSide     = "net"
+#         sz          = ([string]$sz)
+#         slTriggerPx = ([string]$slPrice)
+#         slOrdPx     = "-1"
+#     } | ConvertTo-Json -Compress
+
+#     Send-OkxRequest -Method "POST" `
+#         -RequestPath "/api/v5/trade/order-algo" `
+#         -BodyJson $body `
+#         -config $config
+# }
+
 # ---------------- apply leverage (isolated) ----------------
+
 function Set-IsolatedLeverage {
     param(
         [string]$instId,
         [int]$lever,
         $config,
-        [string]$posSide = "long"
+        [string]$posSide
     )
 
     Log "=== Set-IsolatedLeverage START for $instId lever=$lever posSide=$posSide ===" "DEBUG"
@@ -252,7 +316,7 @@ function Set-IsolatedLeverage {
 
         # Проверяем код OKX
         if ($resp.code -and $resp.code -eq "0") {
-            Log "Set-Isolated-Leverage OK for $instId (resp.code=0)" "OK"
+            # Log "Set-Isolated-Leverage OK for $instId (resp.code=0)" "OK"
             if ($DebugMode) { Log "Response full: $($resp | ConvertTo-Json -Depth 8)" "DEBUG" }
             return $sz
         } else {
@@ -280,13 +344,12 @@ function Set-IsolatedLeverage {
     }
 }
 
-#################### INDICATORS ####################
-
+################### INDICATORS ####################
 function Get-Candles($symbol, $limit, $period) {
     $cacheKey = "$symbol-$period-$limit"
     
     # Проверяем, есть ли в кэше и свежие ли данные
-    if ($global:candleCache.ContainsKey($cacheKey)) {
+        if ($global:candleCache.ContainsKey($cacheKey)) {
         $cached = $global:candleCache[$cacheKey]
         # $age = Get-Timestamp - $cached.Timestamp
         $age = (Get-Timestamp) - $cached.Timestamp
@@ -324,40 +387,7 @@ function Get-Candles($symbol, $limit, $period) {
         return @()
     }
 }
-function Get-EMA($prices, $period) {
-    if ($prices.Count -lt $period) { return @() }
-    $k = 2 / ($period + 1)
-    $ema = @($prices[0])
-    for ($i = 1; $i -lt $prices.Count; $i++) {
-        $ema += $prices[$i] * $k + $ema[$i-1] * (1 - $k)
-    }
-    return $ema
-}
-function Get-RSI([double[]]$prices, [int]$period=14) {
-    if (-not $prices -or $prices.Count -lt ($period + 1)) { return @() }
-    $gains = New-Object System.Collections.Generic.List[double]
-    $losses = New-Object System.Collections.Generic.List[double]
-    for ($i = 1; $i -lt $prices.Count; $i++) {
-        $change = $prices[$i] - $prices[$i-1]
-        if ($change -gt 0) { $gains.Add($change); $losses.Add(0.0) } else { $gains.Add(0.0); $losses.Add([Math]::Abs($change)) }
-    }
-    if ($gains.Count -lt $period) { return @() }
 
-    $avgGain = ($gains[0..($period-1)] | Measure-Object -Sum).Sum / $period
-    $avgLoss = ($losses[0..($period-1)] | Measure-Object -Sum).Sum / $period
-
-    $rsi = New-Object System.Collections.Generic.List[double]
-    $rs = if ($avgLoss -ne 0) { $avgGain / $avgLoss } else { [double]::PositiveInfinity }
-    $rsi.Add([Math]::Round(100 - (100 / (1 + $rs)), 2))
-
-    for ($i = $period; $i -lt $gains.Count; $i++) {
-        $avgGain = (($avgGain * ($period - 1)) + $gains[$i]) / $period
-        $avgLoss = (($avgLoss * ($period - 1)) + $losses[$i]) / $period
-        $rs = if ($avgLoss -ne 0) { $avgGain / $avgLoss } else { [double]::PositiveInfinity }
-        $rsi.Add([Math]::Round(100 - (100 / (1 + $rs)), 2))
-    }
-    return $rsi
-}
 function Get-ATR($candles, $period) {
     if (-not $candles -or $candles.Count -le $period) { return @() }
     $trs = @()
@@ -380,22 +410,67 @@ function Get-ATR($candles, $period) {
     return $atr
 }
 
-# ---------------- main ----------------
+function Get-UTBotSignals {
+    param(
+        [array]$candles,
+        [int]$atrPeriod = 10,
+        [decimal]$atrMultiplier = 1.0
+    )
+
+    if ($candles.Count -le ($atrPeriod + 2)) { return $null }
+
+    $closes = $candles | ForEach-Object { $_.Close }
+
+    # ATR
+    $atrArr = Get-ATR $candles $atrPeriod
+    if ($atrArr.Count -eq 0) { return $null }
+
+    $atr = [decimal]$atrArr[-1]
+    $nLoss = $atr * $atrMultiplier
+
+    # Trailing Stop array
+    $ts = @()
+    $ts += $closes[0]
+
+    for ($i = 1; $i -lt $closes.Count; $i++) {
+        $prevTS = $ts[$i - 1]
+        $price = $closes[$i]
+        $prevPrice = $closes[$i - 1]
+
+        if ($price -gt $prevTS -and $prevPrice -gt $prevTS) {
+            $ts += [Math]::Max($prevTS, $price - $nLoss)
+        }
+        elseif ($price -lt $prevTS -and $prevPrice -lt $prevTS) {
+            $ts += [Math]::Min($prevTS, $price + $nLoss)
+        }
+        elseif ($price -gt $prevTS) {
+            $ts += ($price - $nLoss)
+        }
+        else {
+            $ts += ($price + $nLoss)
+        }
+    }
+
+    # Последние 2 значения
+    $tsPrev   = $ts[-2]
+    $tsCurr   = $ts[-1]
+    $closePrev = $closes[-2]
+    $closeCurr = $closes[-1]
+
+    $longSignal  = ($closePrev -le $tsPrev) -and ($closeCurr -gt $tsCurr)
+    $shortSignal = ($closePrev -ge $tsPrev) -and ($closeCurr -lt $tsCurr)
+
+    return @{
+        atr = $atr
+        trailingStop = $tsCurr
+        long  = $longSignal
+        short = $shortSignal
+    }
+}
+
+# #################### main ####################
 
 $config = Get-Content $configPath -Raw | ConvertFrom-Json
-
-# normalize/ensure some config defaults (including shorts support)
-$tp_atr_multiplier = if ($null -ne $config.tp_atr_multiplier) { [decimal]$config.tp_atr_multiplier } else { 1.0 }
-$sl_atr_multiplier = if ($null -ne $config.sl_atr_multiplier) { [decimal]$config.sl_atr_multiplier } else { 1.0 }
-
-# RSI thresholds (for long use *_max, for short use *_min). Provide sensible defaults.
-$rsi6_max       = if ($null -ne $config.rsi6_max)  { [decimal]$config.rsi6_max }  else { 75 }
-# $rsi14_max      = if ($null -ne $config.rsi14_max) { [decimal]$config.rsi14_max } else { 70 }
-# $rsi30_max      = if ($null -ne $config.rsi30_max) { [decimal]$config.rsi30_max } else { 60 }
-
-$rsi6_min       = if ($null -ne $config.rsi6_min)  { [decimal]$config.rsi6_min }  else { 25 }
-# $rsi14_min      = if ($null -ne $config.rsi14_min) { [decimal]$config.rsi14_min } else { 30 }
-# $rsi30_min      = if ($null -ne $config.rsi30_min) { [decimal]$config.rsi30_min } else { 40 }
 
 $allow_shorts = if ($null -ne $config.allow_shorts) { [bool]$config.allow_shorts } else { $false }
 
@@ -405,7 +480,8 @@ Log "Loaded config: $($configMasked | ConvertTo-Json -Depth 5)" "DEBUG"
 if (-not $config.api_key -or -not $config.secret_key -or -not $config.passphrase) { Log "api_key / secret_key / passphrase must be provided in config file" "ERROR"; exit 1 }
 if (-not $config.instruments -or $config.instruments.Count -eq 0) { Log "No instruments provided in config -> 'instruments' array" "ERROR"; exit 1 }
 
-# ---------------- auth & time ----------------
+# #################### auth & time ####################
+
 try {
     $timeResp = Send-OkxRequest -Method "GET" -RequestPath "/api/v5/public/time" -BodyJson "" -config $config
     if ($timeResp -and $timeResp.data -and $timeResp.data.Count -ge 1) {
@@ -430,220 +506,508 @@ if ($authOk) {
 $candle_period     = $config.candle_period
 $candle_limit      = $config.candle_limit
 $atrPeriod         = $config.atrPeriod
-$tp_atr_multiplier = $tp_atr_multiplier
-$higher_tf         = $config.higher_tf
+$tp_atr_multiplier = $config.tp_atr_multiplier
+$callback_atr_multiplier = $config.callback_atr_multiplier
+$sl_atr_multiplier = $config.sl_atr_multiplier
+$callback_sl_atr_multiplier = $config.callback_sl_atr_multiplier
 
-
-# ---------------- loop instruments ----------------
+# #################### loop instruments ####################
 function Run-Bot {
     foreach ($instId in $config.instruments) {
         Write-Host "`n=== Processing $instId ===" -ForegroundColor White
 
         Start-Sleep -Seconds $config.rerun_interval_s
         
-        # проверка уже открытых позиций
-        if ($authOk) {
-            $positionsResp = Send-OkxRequest -Method "GET" -RequestPath "/api/v5/account/positions?instId=$instId" -BodyJson "" -config $config
-            if ($positionsResp -and $positionsResp.data -and $positionsResp.data.Count -gt 0) {
-                $openPos = $positionsResp.data | Where-Object { $_.pos -ne 0 }
-                if ($openPos.Count -gt 0) {
-                    Log "Открытая позиция уже существует для $instId, пропускаем" "WARN"
-                    continue
-                }
-            }
-        }
-
         $price = Get-Price -instId $instId -config $config
-            Write-Output "Текущая цена: $price" 
+        Write-Output "Текущая цена: $price" 
         
         ############ TRADE CONDITIONS CALCULATION ############
         $candles = Get-Candles $instId $candle_limit $candle_period
-        Write-Output "Получено $($candles.Count) свечей для $instId по таймфрейму $candle_period"
+        # Write-Output "Получено $($candles.Count) свечей для $instId по таймфрейму $candle_period"
+
         if ($candles.Count -lt 2) { continue }   # минимум 2 свечи
 
         # закрытия свечей
-        $closes = $candles | ForEach-Object { $_.Close }
-
-        # массив закрытий без последней свечи
-        $closes_prev = $closes[0..($closes.Count - 2)]
-        $closes_prev_prev = $closes_prev[0..($closes_prev.Count - 2)]
-
-        # расчет RSI
-        $rsi6Arr       = Get-RSI $closes 6
-        $rsi6Arr_prev  = Get-RSI $closes_prev 6
-        $rsi6Arr_prev_prev = Get-RSI $closes_prev_prev 6
-
-        # RSI последней и предпоследней свечи
-        $rsi6Curr = $rsi6Arr[-1]
-        $rsi6Prev = $rsi6Arr_prev[-1]
-        $rsi6PrevPrev = $rsi6Arr_prev_prev[-1]
-
-        Write-Output "RSI6: prev_prev=$rsi6PrevPrev, prev=$rsi6Prev, curr=$rsi6Curr"
-
-        # ===== RSI LIVE (с учётом текущей цены) =====
-        $closes_live = $closes + $price    # добавляем текущую цену неформировавшейся свечи
-        $rsi6Arr_live = Get-RSI $closes_live 6
-        $rsi6Live = $rsi6Arr_live[-1]
-
-        Write-Output "RSI6 Live = $rsi6Live"
+        # $closes = $candles | ForEach-Object { $_.Close }
 
         # ===== ATR =====
         $atrArr = Get-ATR $candles $atrPeriod
         if ($atrArr.Count -eq 0) { continue }
         $atr = $atrArr[-1]
-        Write-Output "ATR($atrPeriod): $atr"
+        # Write-Output "ATR($atrPeriod): $atr"
         $atr_pct = ($atr / $price) * 100
-        Write-Output "ATR%: $([math]::Round($atr_pct, 4)) %"
+        $atr_pct_rounded = $([math]::Round($atr_pct, 4))
+        Write-Output "ATR%: $atr_pct_rounded %"
 
-        # ===== ТРЕЙД-СИГНАЛЫ (3x RSI check) =====
+        # === CHECK EXISTING POSITION ===
+        $hasLong = $false
+        $hasShort = $false
+        $posSize = 0
+        $position = $null
+        $info = Get-InstrumentInfo -instId $instId -config $config
 
-        $longSignal =
-            ($rsi6PrevPrev -lt $rsi6_min) -and
-            ($rsi6Prev -lt $rsi6_min) -and
-            ($rsi6Curr -lt $rsi6_min) -and
-            ($rsi6Live -lt $rsi6_min)
-
-
-        $shortSignal =
-            ($rsi6PrevPrev -gt $rsi6_max) -and
-            ($rsi6Prev -gt $rsi6_max) -and
-            ($rsi6Curr -gt $rsi6_max) -and
-            ($rsi6Live -gt $rsi6_max)
-
-        if (-not $longSignal -and -not ($shortSignal -and $allow_shorts)) {
-            Log "No trading signal for $instId — skipping" "WARN"
-            continue
-        }
-
-        ##########################################################
-
-        # проверка уже открытых позиций
         if ($authOk) {
-            $positionsResp = Send-OkxRequest -Method "GET" -RequestPath "/api/v5/account/positions?instId=$instId" -BodyJson "" -config $config
-            if ($positionsResp -and $positionsResp.data -and $positionsResp.data.Count -gt 0) {
-                $openPos = $positionsResp.data | Where-Object { $_.pos -ne 0 }
-                if ($openPos.Count -gt 0) {
-                    Log "Открытая позиция уже существует для $instId, пропускаем" "WARN"
-                    continue
+            $positionsResp = Send-OkxRequest -Method "GET" `
+                -RequestPath "/api/v5/account/positions?instId=$instId" `
+                -BodyJson "" -config $config
+
+            foreach ($p in $positionsResp.data) {
+                # $side = ($p.posSide ?? "net").ToLower()
+                $posRaw = [decimal]$p.pos
+                $ctVal = [decimal]$info.ctVal
+
+                $pos = $posRaw / $ctVal
+
+                if ($pos -gt 0 ) {
+                    $hasLong = $true
+                    $posSize = $pos
+                    $position = $p
+                    # Write-Output "Открытая позиция: side=$side size=$posSize"
+                    break
+                }
+
+                if ($pos -lt 0 ) {
+                    $hasShort = $true
+                    $posSize = $pos
+                    $position = $p
+                    # Write-Output "Открытая позиция: side=$side size=$posSize"
+                    break
                 }
             }
         }
-        
-        if ($null -eq $price) { Log "Skipping $instId — price not available" "WARN"; continue }
 
-        $info = Get-InstrumentInfo -instId $instId -config $config
-        $contractMode = $false; $ctVal = $null; $step = $null; $tick = $null
-        if ($info) {
-            if ($info.ctVal) { $ctVal = [decimal]$info.ctVal; $contractMode = $true }
-            if ($info.minSz) { $step = [decimal]$info.minSz } elseif ($info.lotSz) { $step = [decimal]$info.lotSz } elseif ($info.sz) { $step = [decimal]$info.sz }
-            if ($info.tickSz) { $tick = [decimal]$info.tickSz }
-            Log "Instrument meta: ctVal=$ctVal, step/minSz=$step, tickSz=$tick" "DEBUG"
+        if ($hasLong) {
+
+            Write-Output "🟢 There is an open LONG position  $instId"
+
+            $entryPx   = [decimal]$position.avgPx
+            $currentPx = [decimal]$price
+            $atrDec    = [decimal]$atr
+
+            $profit = $currentPx - $entryPx
+            # Write-Output "Profit from entry: $profit"
+
+            $profitPct = [math]::Round(($profit / $entryPx) * 100, 2)
+            Write-Output "Current Profit%: $profitPct %"
+
+            $targetProfit = $atr_pct_rounded * $tp_atr_multiplier
+            write-output "Target profit % $targetProfit"
+
+            $ProfitToDo = $targetProfit - $profitPct
+            write-output "🎯 Profit to target TP% 🚀 $ProfitToDo%"
+
+            $trailingOrders  = Get-ActiveAlgoOrders -instId $instId -config $config -ordType "move_order_stop"
+            Write-Output "TrailingOrders  $($trailingOrders.side)"
+
+            if ($trailingOrders.Count -gt 0) {
+                Write-Output "✔️ Aктивных trailingOrders ордеров: $($trailingOrders.Count)"
+            }
+
+            # получить все conditional (старые SL)
+            # $conditionalOrders = Get-ActiveAlgoOrders -instId $instId -config $config -ordType "conditional"
+
+            # старт Profit and Loss трейлингов
+            # if (($profit -ge ($atrDec*$tp_atr_multiplier)) -and ($trailingOrders.Count -eq 0)) {
+            if (($trailingOrders.Count -lt 2)) {
+               
+                # размер позиции
+                $ctVal = [decimal]$info.ctVal
+                $szApi = [math]::Abs([math]::Round($posSize * $ctVal, 8))
+
+                ####### Profit TS #############
+                Write-Output "💸 Placing PROFIT trailing stop"
+
+                # ATR
+                $callback = $callback_atr_multiplier * $atrDec
+
+                # callbackRatio = в ATR относительно текущей цены
+                $callbackRatio = [math]::Round($callback / $currentPx, 6)
+
+                $activePxTP = $entryPx + ($tp_atr_multiplier * $atrDec)
+
+                Write-Output "TP activation price = $activePxTP"
+
+                $trailingOrder = @{
+                    instId = $instId
+                    tdMode = $config.mgnMode
+                    side = "sell"
+                    ordType = "move_order_stop"
+                    sz = ([string]$szApi)
+                    callbackRatio = ([string]$callbackRatio)
+                    activePx = ([string]$activePxTP) #- цена активации
+                }
+
+                $resp = Send-OkxRequest -Method "POST" `
+                        -RequestPath "/api/v5/trade/order-algo" `
+                        -BodyJson ($trailingOrder | ConvertTo-Json -Compress) `
+                        -config $config
+
+                if ($resp.code -eq "0") {
+                    Log "Trailing stop placed: $currentPx for size $szApi" "OK"
+                } else {
+                    Log "Failed to place trailing stop: $($resp.msg)" "ERROR"
+                }
+                ####### LOSS TS #############
+                Write-Output "💸 Placing LOSS trailing stop"
+
+                # ATR
+                $callback = $callback_sl_atr_multiplier * $atrDec
+
+                # callbackRatio = в ATR относительно текущей цены
+                $callbackRatio = [math]::Round($callback / $currentPx, 6)
+
+                $activePxSL = $entryPx - ($tp_atr_multiplier * $atrDec)
+
+                Write-Output "SL activation price = $activePxSL"
+
+                $trailingOrder = @{
+                    instId = $instId
+                    tdMode = $config.mgnMode
+                    side = "buy"
+                    ordType = "move_order_stop"
+                    sz = ([string]$szApi)
+                    callbackRatio = ([string]$callbackRatio)
+                    activePx = ([string]$activePxSL) #- цена активации
+                }
+            }
+
+            
+            # $lossLimit = $atrDec * $sl_atr_multiplier
+
+            # write-output "Loss limit $(-$lossLimit)"
+            # write-output "Profit $profit"
+
+            # if (($profit -le -$lossLimit) -and ($trailingOrders.Count -eq 0)) {
+            #     Write-Output "❌ Stop loss hit (ATR based)"
+
+            #     # новый трейлинг-стоп
+            #     # размер позиции
+            #     $ctVal = [decimal]$info.ctVal
+            #     $szApi = [math]::Abs([math]::Round($posSize * $ctVal, 8))
+
+            #     Write-Output "😱 Placing trailing stop"
+
+            #     # ATR
+            #     $callback = $callback_sl_atr_multiplier * $atrDec
+
+            #     # callbackRatio = часть ATR относительно текущей цены
+            #     $callbackRatio = [math]::Round($callback / $currentPx, 6)
+
+            #     $trailingOrder = @{
+            #         instId = $instId
+            #         tdMode = $config.mgnMode
+            #         side = "sell"
+            #         ordType = "move_order_stop"
+            #         sz = ([string]$szApi)
+            #         callbackRatio = ([string]$callbackRatio)
+            #         reduceOnly = $true              # 🔥 КРИТИЧНО
+            #         # activePx = ([string]$currentPx) - цена активации
+            #     }
+
+            #     $resp = Send-OkxRequest -Method "POST" `
+            #             -RequestPath "/api/v5/trade/order-algo" `
+            #             -BodyJson ($trailingOrder | ConvertTo-Json -Compress) `
+            #             -config $config
+
+            #     if ($resp.code -eq "0") {
+            #         Log "Trailing stop placed: $currentPx for size $szApi" "OK"
+            #     } else {
+            #         Log "Failed to place trailing stop: $($resp.msg)" "ERROR"
+            #     }
+            # }
         }
 
-        $notional_desired = [decimal]($config.position_size_usd * $config.leverage)
-        Log "Desired notional = $notional_desired USD" "DEBUG"
+        if ($hasShort) {
 
-        if ($contractMode -and $null -ne $ctVal -and $ctVal -gt 0) {
-            $rawContracts = [decimal]($notional_desired / ($ctVal * $price))
-            if ($null -eq $step -or $step -le 0) { $step = 1 }
-            $sz = Set-ToStep -value $rawContracts -step $step
-            Log "rawContracts = $rawContracts, rounded contracts sz = $sz (contract step = $step)" "DEBUG"
-        } else {
-            $rawSize = [decimal]($notional_desired / $price)
-            if ($null -eq $step -or $step -le 0) { if ($price -gt 1000) { $step = 0.0001 } elseif ($price -lt 1) { $step = 0.01 } else { $step = 0.0001 } }
-            $sz = Set-ToStep -value $rawSize -step $step
-            Log "rawSize (coin qty) = $rawSize, rounded sz = $sz (coin step = $step)" "DEBUG"
+            Write-Output "🔴 There is an open SHORT position  $instId"
+
+            $entryPx   = [decimal]$position.avgPx
+            $currentPx = [decimal]$price
+            $atrDec    = [decimal]$atr
+
+            $profit = $entryPx - $currentPx
+            # Write-Output "Profit from entry: $profit"
+
+            $profitPct = [math]::Round(($profit / $entryPx) * 100, 2)
+            Write-Output "Current Profit%: $profitPct %"
+
+            $targetProfit = $atr_pct_rounded * $tp_atr_multiplier
+            write-output "Target profit % $targetProfit"
+
+            $ProfitToDo = $targetProfit - $profitPct
+            write-output "🎯 Profit to target TP% 🚀 $ProfitToDo%"
+
+            $trailingOrders  = Get-ActiveAlgoOrders -instId $instId -config $config -ordType "move_order_stop"
+            if ($trailingOrders.Count -gt 0) {
+                Write-Output "✔️ Aктивных trailingOrders ордеров: $($trailingOrders.Count)"
+            }
+
+            # получить все conditional (старые SL)
+            # $conditionalOrders = Get-ActiveAlgoOrders -instId $instId -config $config -ordType "conditional"
+
+            # старт Profit and Loss трейлингов
+            # if (($profit -ge ($atrDec*$tp_atr_multiplier)) -and ($trailingOrders.Count -eq 0)) {
+            if (($trailingOrders.Count -lt 2)) {
+               
+                # размер позиции
+                $ctVal = [decimal]$info.ctVal
+                $szApi = [math]::Abs([math]::Round($posSize * $ctVal, 8))
+
+                ####### Profit TS #############
+                Write-Output "💸 Placing PROFIT trailing stop"
+
+                # ATR
+                $callback = $callback_atr_multiplier * $atrDec
+
+                # callbackRatio = в ATR относительно текущей цены
+                $callbackRatio = [math]::Round($callback / $currentPx, 6)
+
+                $activePxTP = $entryPx - ($tp_atr_multiplier * $atrDec)
+
+                Write-Output "TP activation price = $activePxTP"
+
+                $trailingOrder = @{
+                    instId = $instId
+                    tdMode = $config.mgnMode
+                    side = "sell"
+                    ordType = "move_order_stop"
+                    sz = ([string]$szApi)
+                    callbackRatio = ([string]$callbackRatio)
+                    activePx = ([string]$activePxTP) #- цена активации
+                }
+
+                $resp = Send-OkxRequest -Method "POST" `
+                        -RequestPath "/api/v5/trade/order-algo" `
+                        -BodyJson ($trailingOrder | ConvertTo-Json -Compress) `
+                        -config $config
+
+                if ($resp.code -eq "0") {
+                    Log "Trailing stop placed: $currentPx for size $szApi" "OK"
+                } else {
+                    Log "Failed to place trailing stop: $($resp.msg)" "ERROR"
+                }
+                ####### LOSS TS #############
+                Write-Output "💸 Placing LOSS trailing stop"
+
+                # ATR
+                $callback = $callback_sl_atr_multiplier * $atrDec
+
+                # callbackRatio = в ATR относительно текущей цены
+                $callbackRatio = [math]::Round($callback / $currentPx, 6)
+
+                $activePxSL = $entryPx + ($tp_atr_multiplier * $atrDec)
+
+                Write-Output "SL activation price = $activePxSL"
+
+                $trailingOrder = @{
+                    instId = $instId
+                    tdMode = $config.mgnMode
+                    side = "buy"
+                    ordType = "move_order_stop"
+                    sz = ([string]$szApi)
+                    callbackRatio = ([string]$callbackRatio)
+                    activePx = ([string]$activePxSL) #- цена активации
+                }
+            }
+
+
+            # # === CLOSE SHORT BY TRAILING STOP LOSS===
+            # # старт трейлинга после максимальной просадки
+            # $lossLimit = $atrDec * $sl_atr_multiplier
+
+            # write-output "Loss limit $(-$lossLimit)"
+            # write-output "Profit $profit"
+            
+            # if (($profit -le -$lossLimit) -and ($trailingOrders.Count -eq 0)) {
+            #     Write-Output "❌ Stop loss hit (ATR based)"
+
+            #     # новый трейлинг-стоп
+            #     # размер позиции
+            #     $ctVal = [decimal]$info.ctVal
+            #     $szApi = [math]::Abs([math]::Round($posSize * $ctVal, 8))
+
+            #     Write-Output "😱 Placing trailing stop"
+
+            #     # ATR
+            #     $callback = $callback_sl_atr_multiplier * $atrDec
+
+            #     # callbackRatio = часть ATR относительно текущей цены
+            #     $callbackRatio = [math]::Round($callback / $currentPx, 6)
+
+            #     $trailingOrder = @{
+            #         instId = $instId
+            #         tdMode = $config.mgnMode
+            #         side = "buy"
+            #         ordType = "move_order_stop"
+            #         sz = ([string]$szApi)
+            #         callbackRatio = ([string]$callbackRatio)
+            #         reduceOnly = $true              # 🔥 КРИТИЧНО
+            #         # activePx = ([string]$currentPx) - цена активации
+            #     }
+
+            #     $resp = Send-OkxRequest -Method "POST" `
+            #             -RequestPath "/api/v5/trade/order-algo" `
+            #             -BodyJson ($trailingOrder | ConvertTo-Json -Compress) `
+            #             -config $config
+
+            #     if ($resp.code -eq "0") {
+            #         Log "Trailing stop placed: $currentPx for size $szApi" "OK"
+            #     } else {
+            #         Log "Failed to place trailing stop: $($resp.msg)" "ERROR"
+            #     }
+            # }
         }
 
-        if ($sz -le 0) {
-            if ($config.force_min_size -and $step -gt 0) {
-                if ($contractMode -and $null -ne $ctVal) { $notional_if_forced = [math]::Round(($step * $ctVal * $price), 8) } else { $notional_if_forced = [math]::Round(($step * $price), 8) }
-                $threshold = $config.force_threshold_factor
-                if ($notional_if_forced -gt ($notional_desired * $threshold)) { Log "Forcing minimal step would create notional $notional_if_forced USD > $threshold × desired. Skipping" "WARN"; continue }
-                Log "rawSize < step; forcing sz = step ($step). forced notional = $notional_if_forced USD" "WARN"
-                $sz = $step
-            } else { Log "After rounding sz = 0 and force_min_size is false -> skipping $instId" "WARN"; continue }
+        ############ UT BOT SIGNALS ############
+
+        $ut = Get-UTBotSignals `
+                    -candles $candles `
+                    -atrPeriod $config.atrPeriod `
+                    -atrMultiplier $config.ut_multiplier
+
+        if (-not $ut) {
+            Log "UT Bot calculation failed — skipping $instId" "WARN"
+            continue
         }
 
-        if ($contractMode -and $null -ne $ctVal) { $notional_actual = [math]::Round(($sz * $ctVal * $price), 8) } else { $notional_actual = [math]::Round(($sz * $price), 8) }
-        Log "Final: sz = $sz (step $step). notional_actual = $notional_actual USD" "INFO"
+        # Write-Output "UT Bot: ATR=$($ut.atr), TS=$($ut.trailingStop)"
 
-        # ---------------- apply leverage ----------------
-        if ($config.set_leverage -and $config.leverage -gt 1) {
-            if (-not $authOk) {
-                Log "Skipping Set-IsolatedLeverage because earlier auth check failed" "WARN"
-            } else {
-                Log "Applying leverage $($config.leverage) for $instId" "INFO"
-                # pass posSide depending on trade direction (will default to 'long' inside function)
-                $posSideForLeverage = if ($longSignal) { "long" } elseif ($shortSignal) { "short" } else { "long" }
-                $setResp = Set-IsolatedLeverage -instId $instId -lever $config.leverage -config $config -posSide $posSideForLeverage
-                if ($null -eq $setResp) { Log "Failed to set leverage; skipping" "ERROR" } else { Log "Set-IsolatedLeverage response: $(ConvertTo-Json $setResp -Depth 5)" "INFO" }
+        $trailingOrders  = Get-ActiveAlgoOrders -instId $instId -config $config -ordType "move_order_stop" # проверка актуальных ордеров
+        if (($ut.long -or $ut.short) -and ($trailingOrders.Count -eq 0)) {
+            if ($ut.long) {
+                $posSide = "long"
+            }
+            if ($ut.short) {
+                $posSide = "short"
+            }
+            $sz = Set-IsolatedLeverage `
+                -instId $instId `
+                -lever $config.leverage `
+                -config $config `
+                -posSide $posSide
+
+            if (-not $sz) {
+                Log "Failed to calculate position size" "ERROR"
+                continue
             }
         }
+        
+        $buySignal  = $ut.long
+        $sellSignal = $ut.short
 
-        # ---------------- place market order + attach TP/SL ----------------
-        $side = if ($longSignal) { "buy" } else { "sell" }
-        $orderObj = @{ instId = $instId; tdMode = $config.mgnMode; side = $side; ordType = "market"; sz = ([string]$sz) }
+        if ($buySignal) { Write-Output "📈 UT Bot generated BUY signal" }
+        if ($sellSignal) { Write-Output "📉 UT Bot generated SELL signal" }
 
-        if ($contractMode -and $null -ne $posMode) {
-            $pm = $posMode.ToString().ToLower()
-            if ($pm -like "*long*" -or $pm -like "*long_short*") { $orderObj.posSide = if ($side -eq "buy") { "long" } else { "short" }; Log "posMode=$posMode -> adding posSide='$($orderObj.posSide)' to order" "DEBUG" }
-        } elseif ($contractMode) { $orderObj.posSide = if ($side -eq "buy") { "long" } else { "short" }; Log "posMode unknown -> adding posSide for contract (conservative)" "DEBUG" }
-
-        # ---------------- calculate TP & SL ----------------
-        $tpPct = $atr_pct * $tp_atr_multiplier / 100
-            write-Output "Take Profit % based on ATR: $([math]::Round($tpPct * 100, 4)) %"
-        $slPct = $atr_pct * $sl_atr_multiplier / 100
-            write-Output "Stop Loss % based on ATR: $([math]::Round($slPct * 100, 4)) %"
-        $estimatedEntry = $price
-
-        if ($side -eq "buy") {
-            # Long: TP above, SL below
-            $tpTriggerRaw = [decimal]($estimatedEntry * (1 + $tpPct))
-            $slTriggerRaw = [decimal]($estimatedEntry * (1 - $slPct))
-        } else {
-            # Short: TP below entry, SL above entry
-            $tpTriggerRaw = [decimal]($estimatedEntry * (1 - $tpPct))
-            $slTriggerRaw = [decimal]($estimatedEntry * (1 + $slPct))
-        }
-
-        if ($null -ne $tick -and $tick -gt 0) { $tpTrigger = RoundPriceToTick -price $tpTriggerRaw -tick $tick } else { $tpTrigger = [math]::Round($tpTriggerRaw, 8) }
-        if ($null -ne $tick -and $tick -gt 0) { $slTrigger = RoundPriceToTick -price $slTriggerRaw -tick $tick } else { $slTrigger = [math]::Round($slTriggerRaw, 8) }
-
-        $attachId = "tpsl" + [guid]::NewGuid().ToString("N").Substring(0,12)
-        $attachObj = @{
-            attachAlgoClOrdId = $attachId
-            tpTriggerPx        = ([string]$tpTrigger)
-            tpTriggerPxType    = $config.tp_trigger_type
-            tpOrdPx            = if ($config.tp_exec_market) { "-1" } else { ([string]$tpTrigger) }
-            slTriggerPx        = ([string]$slTrigger)
-            slTriggerPxType    = $config.tp_trigger_type
-            slOrdPx            = if ($config.tp_exec_market) { "-1" } else { ([string]$slTrigger) }
-            sz                 = ([string]$sz)
-        }
-
-        $orderObj.attachAlgoOrds = @($attachObj)
-
-        $orderJson = $orderObj | ConvertTo-Json -Depth 10 -Compress
-        Log "Open order with attachAlgoOrds (TP+SL): $orderJson" "DEBUG"
-
-        if (-not $authOk) { Log "Auth check earlier failed. Will not place real orders. (Use -ForceLive to override if you know what you're doing)" "WARN"; continue }
-
-        #-------- Сделка --------
-        $resp = Send-OkxRequest -Method "POST" -RequestPath "/api/v5/trade/order" -BodyJson $orderJson -config $config
-        if ($resp -and $resp.dryRun) {
-            Log "DRY RUN — order preview (attached TP+SL shown in preview)" "WARN"
-            ($resp | ConvertTo-Json -Depth 6) | Write-Host
-        } elseif ($null -eq $resp) {
-            Log "Order failed or empty response" "ERROR"
+        if (-not $buySignal -and -not $sellSignal) {
+            Log "No UT Bot signal — waiting" "DEBUG"
             continue
+        }
+
+        if ($hasShort) {
+            Write-Output "📥 There is already an open SHORT position  $instId"
+
         } else {
-            Log "Order response:" "OK"
-            ($resp | ConvertTo-Json -Depth 8) | Write-Host
+            Write-Output "No open SHORT position for $instId"
+
+            # === OPEN LONG ===
+            if ($buySignal -and (-not $hasShort) -and (-not $hasLong)) {
+
+                if (-not $sz -or $sz -le 0) {
+                    Log "Invalid sz — cannot open SHORT" "ERROR"
+                    continue
+                }
+
+                Log "UT BUY → opening SHORT" "OK"
+                write-output "sz=$sz" "DEBUG"
+
+                $orderObj = @{
+                    instId = $instId
+                    tdMode = $config.mgnMode
+                    side   = "sell"
+                    ordType = "market"
+                    sz = ([string]$sz)
+                }
+
+                $resp = Send-OkxRequest -Method "POST" `
+                    -RequestPath "/api/v5/trade/order" `
+                    -BodyJson ($orderObj | ConvertTo-Json -Compress) `
+                    -config $config
+
+                if ($resp) {
+                    Log "SHORT opened by UT BUY" "OK"
+                    write-output "Order response: $($resp | ConvertTo-Json -Depth 6)" "DEBUG"
+                }
+                continue
+            }
+        }
+        
+        if ($hasLong) {
+            Write-Output "📥 There is already an open LONG position  $instId"
+
+        } else {
+            Write-Output "No open LONG position for $instId"
+
+            # === OPEN LONG ===
+            if ($sellSignal -and (-not $hasShort) -and (-not $hasLong)) {
+
+                if (-not $sz -or $sz -le 0) {
+                    Log "Invalid sz — cannot open LONG" "ERROR"
+                    continue
+                }
+
+                Log "UT SELL → opening LONG" "OK"
+                write-output "sz=$sz" "DEBUG"
+
+                $orderObj = @{
+                    instId = $instId
+                    tdMode = $config.mgnMode
+                    side   = "buy"
+                    ordType = "market"
+                    sz = ([string]$sz)
+                }
+
+                $resp = Send-OkxRequest -Method "POST" `
+                    -RequestPath "/api/v5/trade/order" `
+                    -BodyJson ($orderObj | ConvertTo-Json -Compress) `
+                    -config $config
+
+                if ($resp) {
+                    Log "SHORT opened by UT SELL" "OK"
+                    write-output "Order response: $($resp | ConvertTo-Json -Depth 6)" "DEBUG"
+                }
+                continue
+            }
         }
     }
+        Log "Cycle done." "OK"
+        # ================= ACCOUNT BALANCE =================
+        if ($authOk) {
 
-    Log "Done." "OK"
+            $balResp = Send-OkxRequest -Method "GET" `
+                -RequestPath "/api/v5/account/balance" `
+                -BodyJson "" `
+                -config $config
+
+            if ($balResp -and $balResp.code -eq "0") {
+
+                $acc = $balResp.data[0]
+                $usdt = $acc.details | Where-Object { $_.ccy -eq "USDT" }
+
+                Write-Host "`n===== ACCOUNT BALANCE =====" -ForegroundColor Cyan
+                Write-Host ("Total Equity: {0} USDT" -f $acc.totalEq) -ForegroundColor White
+
+                if ($usdt) {
+                    Write-Host ("USDT Available: {0}" -f $usdt.availBal) -ForegroundColor Green
+                    Write-Host ("USDT Equity   : {0}" -f $usdt.eq) -ForegroundColor White
+                    Write-Host ("USDT UPL      : {0}" -f $usdt.upl) -ForegroundColor Yellow
+                }
+
+                Write-Host "===========================`n" -ForegroundColor Cyan
+
+            } else {
+                Log "Failed to fetch account balance" "WARN"
+            }
+        }
 }
 
 while ($true) {
