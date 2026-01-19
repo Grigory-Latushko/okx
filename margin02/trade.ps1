@@ -850,6 +850,32 @@ function Run-Bot {
         if ($hasLong) {
             Write-Output "📥 There is already an open LONG position  $instId"
 
+        # === CLOSE LONG BY SELL SIGNAL ===
+
+        # if ($sellSignal -and $hasLong) {
+        #     Log "UT SELL → closing LONG" "WARN"
+        #     $info = Get-InstrumentInfo -instId $instId -config $config
+        #     $ctVal = if ($info.ctVal) { [decimal]$info.ctVal } else { 1 }
+        #     $szApi = [math]::Round($posSize * $ctVal, 8)
+        #     $closeObj = @{
+        #         instId = $instId
+        #         tdMode = $config.mgnMode
+        #         side   = "sell"
+        #         ordType = "market"
+        #         sz     = ([string]$szApi)
+        #         reduceOnly = $true
+        #     }
+
+        #     $resp = Send-OkxRequest -Method "POST" `
+        #         -RequestPath "/api/v5/trade/order" `
+        #         -BodyJson ($closeObj | ConvertTo-Json -Compress) `
+        #         -config $config
+
+        #     if ($resp) {
+        #         Log "LONG closed by UT SELL" "OK"
+        #     }
+        #     continue
+        # }
         } else {
             Write-Output "No open LONG position for $instId"
 
@@ -889,6 +915,32 @@ function Run-Bot {
         if ($hasShort) {
             Write-Output "📥 There is already an open SHORT position  $instId"
 
+            # === CLOSE SHORT BY BYU SIGNAL ===
+           
+            # if ($buySignal -and $hasShort) {
+            #     Log "UT BUY → closing SHORT" "WARN"
+            #     $info = Get-InstrumentInfo -instId $instId -config $config
+            #     $ctVal = if ($info.ctVal) { [decimal]$info.ctVal } else { 1 }
+            #     $szApi = [math]::Round($posSize * $ctVal, 8)
+            #     $closeObj = @{
+            #         instId = $instId
+            #         tdMode = $config.mgnMode
+            #         side   = "buy"
+            #         ordType = "market"
+            #         sz     = ([string]$szApi)
+            #         reduceOnly = $true
+            #     }
+
+            #     $resp = Send-OkxRequest -Method "POST" `
+            #         -RequestPath "/api/v5/trade/order" `
+            #         -BodyJson ($closeObj | ConvertTo-Json -Compress) `
+            #         -config $config
+
+            #     if ($resp) {
+            #         Log "SHORT closed by UT BUY" "OK"
+            #     }
+            #     continue
+            # }
 
         } else {
             Write-Output "No open SHORT position for $instId"
