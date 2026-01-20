@@ -510,6 +510,7 @@ $tp_atr_multiplier = $config.tp_atr_multiplier
 $callback_atr_multiplier = $config.callback_atr_multiplier
 $sl_atr_multiplier = $config.sl_atr_multiplier
 $callback_sl_atr_multiplier = $config.callback_sl_atr_multiplier
+$min_atr_pct = $config.min_atr_pct
 
 # #################### loop instruments ####################
 function Run-Bot {
@@ -854,8 +855,8 @@ function Run-Bot {
         } else {
             Write-Output "No open SHORT position for $instId"
 
-            # === OPEN LONG ===
-            if ($buySignal -and (-not $hasShort) -and (-not $hasLong)) {
+            # === OPEN SHORT ===
+            if ($buySignal -and (-not $hasShort) -and (-not $hasLong) -and ($min_atr_pct -gt $atr_pct)) {
 
                 if (-not $sz -or $sz -le 0) {
                     Log "Invalid sz — cannot open SHORT" "ERROR"
@@ -893,7 +894,7 @@ function Run-Bot {
             Write-Output "No open LONG position for $instId"
 
             # === OPEN LONG ===
-            if ($sellSignal -and (-not $hasShort) -and (-not $hasLong)) {
+            if ($sellSignal -and (-not $hasShort) -and (-not $hasLong) -and ($min_atr_pct -gt $atr_pct)) {
 
                 if (-not $sz -or $sz -le 0) {
                     Log "Invalid sz — cannot open LONG" "ERROR"

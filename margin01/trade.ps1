@@ -1,4 +1,3 @@
-# MARGIN 02
 
 param(
   [string]$ConfigPath = ".\config.json",
@@ -656,7 +655,7 @@ function Run-Bot {
                 # callbackRatio = в ATR относительно текущей цены
                 $callbackRatio = [math]::Round($callback / $currentPx, 6)
 
-                $activePxSL = $entryPx - ($tp_atr_multiplier * $atrDec)
+                $activePxSL = $entryPx - ($sl_atr_multiplier * $atrDec)
 
                 Write-Output "SL activation price = $activePxSL"
 
@@ -669,52 +668,18 @@ function Run-Bot {
                     callbackRatio = ([string]$callbackRatio)
                     activePx = ([string]$activePxSL) #- цена активации
                 }
+
+                $resp = Send-OkxRequest -Method "POST" `
+                            -RequestPath "/api/v5/trade/order-algo" `
+                            -BodyJson ($trailingOrder | ConvertTo-Json -Compress) `
+                            -config $config
+
+                    if ($resp.code -eq "0") {
+                        Log "Trailing stop placed: $currentPx for size $szApi" "OK"
+                    } else {
+                        Log "Failed to place trailing stop: $($resp.msg)" "ERROR"
+                    }
             }
-
-            
-            # $lossLimit = $atrDec * $sl_atr_multiplier
-
-            # write-output "Loss limit $(-$lossLimit)"
-            # write-output "Profit $profit"
-
-            # if (($profit -le -$lossLimit) -and ($trailingOrders.Count -eq 0)) {
-            #     Write-Output "❌ Stop loss hit (ATR based)"
-
-            #     # новый трейлинг-стоп
-            #     # размер позиции
-            #     $ctVal = [decimal]$info.ctVal
-            #     $szApi = [math]::Abs([math]::Round($posSize * $ctVal, 8))
-
-            #     Write-Output "😱 Placing trailing stop"
-
-            #     # ATR
-            #     $callback = $callback_sl_atr_multiplier * $atrDec
-
-            #     # callbackRatio = часть ATR относительно текущей цены
-            #     $callbackRatio = [math]::Round($callback / $currentPx, 6)
-
-            #     $trailingOrder = @{
-            #         instId = $instId
-            #         tdMode = $config.mgnMode
-            #         side = "sell"
-            #         ordType = "move_order_stop"
-            #         sz = ([string]$szApi)
-            #         callbackRatio = ([string]$callbackRatio)
-            #         reduceOnly = $true              # 🔥 КРИТИЧНО
-            #         # activePx = ([string]$currentPx) - цена активации
-            #     }
-
-            #     $resp = Send-OkxRequest -Method "POST" `
-            #             -RequestPath "/api/v5/trade/order-algo" `
-            #             -BodyJson ($trailingOrder | ConvertTo-Json -Compress) `
-            #             -config $config
-
-            #     if ($resp.code -eq "0") {
-            #         Log "Trailing stop placed: $currentPx for size $szApi" "OK"
-            #     } else {
-            #         Log "Failed to place trailing stop: $($resp.msg)" "ERROR"
-            #     }
-            # }
         }
 
         if ($hasShort) {
@@ -795,7 +760,7 @@ function Run-Bot {
                 # callbackRatio = в ATR относительно текущей цены
                 $callbackRatio = [math]::Round($callback / $currentPx, 6)
 
-                $activePxSL = $entryPx + ($tp_atr_multiplier * $atrDec)
+                $activePxSL = $entryPx + ($sl_atr_multiplier * $atrDec)
 
                 Write-Output "SL activation price = $activePxSL"
 
@@ -808,54 +773,18 @@ function Run-Bot {
                     callbackRatio = ([string]$callbackRatio)
                     activePx = ([string]$activePxSL) #- цена активации
                 }
+
+                $resp = Send-OkxRequest -Method "POST" `
+                        -RequestPath "/api/v5/trade/order-algo" `
+                        -BodyJson ($trailingOrder | ConvertTo-Json -Compress) `
+                        -config $config
+
+                if ($resp.code -eq "0") {
+                    Log "Trailing stop placed: $currentPx for size $szApi" "OK"
+                } else {
+                    Log "Failed to place trailing stop: $($resp.msg)" "ERROR"
+                }
             }
-
-
-            # # === CLOSE SHORT BY TRAILING STOP LOSS===
-            # # старт трейлинга после максимальной просадки
-            # $lossLimit = $atrDec * $sl_atr_multiplier
-
-            # write-output "Loss limit $(-$lossLimit)"
-            # write-output "Profit $profit"
-            
-            # if (($profit -le -$lossLimit) -and ($trailingOrders.Count -eq 0)) {
-            #     Write-Output "❌ Stop loss hit (ATR based)"
-
-            #     # новый трейлинг-стоп
-            #     # размер позиции
-            #     $ctVal = [decimal]$info.ctVal
-            #     $szApi = [math]::Abs([math]::Round($posSize * $ctVal, 8))
-
-            #     Write-Output "😱 Placing trailing stop"
-
-            #     # ATR
-            #     $callback = $callback_sl_atr_multiplier * $atrDec
-
-            #     # callbackRatio = часть ATR относительно текущей цены
-            #     $callbackRatio = [math]::Round($callback / $currentPx, 6)
-
-            #     $trailingOrder = @{
-            #         instId = $instId
-            #         tdMode = $config.mgnMode
-            #         side = "buy"
-            #         ordType = "move_order_stop"
-            #         sz = ([string]$szApi)
-            #         callbackRatio = ([string]$callbackRatio)
-            #         reduceOnly = $true              # 🔥 КРИТИЧНО
-            #         # activePx = ([string]$currentPx) - цена активации
-            #     }
-
-            #     $resp = Send-OkxRequest -Method "POST" `
-            #             -RequestPath "/api/v5/trade/order-algo" `
-            #             -BodyJson ($trailingOrder | ConvertTo-Json -Compress) `
-            #             -config $config
-
-            #     if ($resp.code -eq "0") {
-            #         Log "Trailing stop placed: $currentPx for size $szApi" "OK"
-            #     } else {
-            #         Log "Failed to place trailing stop: $($resp.msg)" "ERROR"
-            #     }
-            # }
         }
 
         ############ UT BOT SIGNALS ############
