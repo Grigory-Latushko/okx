@@ -856,36 +856,41 @@ function Run-Bot {
             Write-Output "No open SHORT position for $instId"
 
             # === OPEN SHORT ===
-            if ($buySignal -and (-not $hasShort) -and (-not $hasLong) -and ($min_atr_pct -gt $atr_pct)) {
+            if ($min_atr_pct -gt $atr_pct) {
+                Write-Output "Low volatility"
+            }
+            else {
+                if ($buySignal -and (-not $hasShort) -and (-not $hasLong)) {
+                    
+                    if (-not $sz -or $sz -le 0) {
+                        Log "Invalid sz — cannot open SHORT" "ERROR"
+                        continue
+                    }
 
-                if (-not $sz -or $sz -le 0) {
-                    Log "Invalid sz — cannot open SHORT" "ERROR"
+                    Log "UT BUY → opening SHORT" "OK"
+                    write-output "sz=$sz" "DEBUG"
+
+                    $orderObj = @{
+                        instId = $instId
+                        tdMode = $config.mgnMode
+                        side   = "sell"
+                        ordType = "market"
+                        sz = ([string]$sz)
+                    }
+
+                    $resp = Send-OkxRequest -Method "POST" `
+                        -RequestPath "/api/v5/trade/order" `
+                        -BodyJson ($orderObj | ConvertTo-Json -Compress) `
+                        -config $config
+
+                    if ($resp) {
+                        Log "SHORT opened by UT BUY" "OK"
+                        write-output "Order response: $($resp | ConvertTo-Json -Depth 6)" "DEBUG"
+                    }
                     continue
                 }
-
-                Log "UT BUY → opening SHORT" "OK"
-                write-output "sz=$sz" "DEBUG"
-
-                $orderObj = @{
-                    instId = $instId
-                    tdMode = $config.mgnMode
-                    side   = "sell"
-                    ordType = "market"
-                    sz = ([string]$sz)
-                }
-
-                $resp = Send-OkxRequest -Method "POST" `
-                    -RequestPath "/api/v5/trade/order" `
-                    -BodyJson ($orderObj | ConvertTo-Json -Compress) `
-                    -config $config
-
-                if ($resp) {
-                    Log "SHORT opened by UT BUY" "OK"
-                    write-output "Order response: $($resp | ConvertTo-Json -Depth 6)" "DEBUG"
-                }
-                continue
             }
-        }
+    }
         
         if ($hasLong) {
             Write-Output "📥 There is already an open LONG position  $instId"
@@ -894,34 +899,39 @@ function Run-Bot {
             Write-Output "No open LONG position for $instId"
 
             # === OPEN LONG ===
-            if ($sellSignal -and (-not $hasShort) -and (-not $hasLong) -and ($min_atr_pct -gt $atr_pct)) {
+            if ($min_atr_pct -gt $atr_pct) {
+                Write-Output "Low volatility"
+            }
+            else {
+                if ($sellSignal -and (-not $hasShort) -and (-not $hasLong) -and ($min_atr_pct -lt $atr_pct)) {
 
-                if (-not $sz -or $sz -le 0) {
-                    Log "Invalid sz — cannot open LONG" "ERROR"
+                    if (-not $sz -or $sz -le 0) {
+                        Log "Invalid sz — cannot open LONG" "ERROR"
+                        continue
+                    }
+
+                    Log "UT SELL → opening LONG" "OK"
+                    write-output "sz=$sz" "DEBUG"
+
+                    $orderObj = @{
+                        instId = $instId
+                        tdMode = $config.mgnMode
+                        side   = "buy"
+                        ordType = "market"
+                        sz = ([string]$sz)
+                    }
+
+                    $resp = Send-OkxRequest -Method "POST" `
+                        -RequestPath "/api/v5/trade/order" `
+                        -BodyJson ($orderObj | ConvertTo-Json -Compress) `
+                        -config $config
+
+                    if ($resp) {
+                        Log "SHORT opened by UT SELL" "OK"
+                        write-output "Order response: $($resp | ConvertTo-Json -Depth 6)" "DEBUG"
+                    }
                     continue
                 }
-
-                Log "UT SELL → opening LONG" "OK"
-                write-output "sz=$sz" "DEBUG"
-
-                $orderObj = @{
-                    instId = $instId
-                    tdMode = $config.mgnMode
-                    side   = "buy"
-                    ordType = "market"
-                    sz = ([string]$sz)
-                }
-
-                $resp = Send-OkxRequest -Method "POST" `
-                    -RequestPath "/api/v5/trade/order" `
-                    -BodyJson ($orderObj | ConvertTo-Json -Compress) `
-                    -config $config
-
-                if ($resp) {
-                    Log "SHORT opened by UT SELL" "OK"
-                    write-output "Order response: $($resp | ConvertTo-Json -Depth 6)" "DEBUG"
-                }
-                continue
             }
         }
     }

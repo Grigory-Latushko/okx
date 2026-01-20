@@ -83,10 +83,10 @@
 
   "min_atr_pct"       : 0.5,
 
-  "tp_atr_multiplier"          : 1,
+  "tp_atr_multiplier"          : 1.5,
   "callback_atr_multiplier"    : 0.2,
   "sl_atr_multiplier"          : 0.5,
-  "callback_sl_atr_multiplier" : 0.1,
+  "callback_sl_atr_multiplier" : 0.2,
 
   "stop_loss_pct"     : 0.02,
 
