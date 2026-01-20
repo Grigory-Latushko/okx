@@ -1,4 +1,4 @@
-# MARGIN 02
+# MARGIN 04
 
 param(
   [string]$ConfigPath = ".\config.json",
@@ -839,61 +839,35 @@ function Run-Bot {
         $buySignal  = $ut.long
         $sellSignal = $ut.short
 
-        if ($buySignal) { Write-Output "📈 UT Bot generated BUY signal" }
-        if ($sellSignal) { Write-Output "📉 UT Bot generated SELL signal" }
+        if ($buySignal) { Write-Output "📈 UT Bot generated BUY signal, will open SHORT" }
+        if ($sellSignal) { Write-Output "📉 UT Bot generated SELL signal, will open LONG" }
 
         if (-not $buySignal -and -not $sellSignal) {
             Log "No UT Bot signal — waiting" "DEBUG"
             continue
         }
 
-        if ($hasLong) {
-            Write-Output "📥 There is already an open LONG position  $instId"
+        if ($hasShort) {
+            Write-Output "📥 There is already an open SHORT position  $instId"
 
-        # === CLOSE LONG BY SELL SIGNAL ===
-
-        # if ($sellSignal -and $hasLong) {
-        #     Log "UT SELL → closing LONG" "WARN"
-        #     $info = Get-InstrumentInfo -instId $instId -config $config
-        #     $ctVal = if ($info.ctVal) { [decimal]$info.ctVal } else { 1 }
-        #     $szApi = [math]::Round($posSize * $ctVal, 8)
-        #     $closeObj = @{
-        #         instId = $instId
-        #         tdMode = $config.mgnMode
-        #         side   = "sell"
-        #         ordType = "market"
-        #         sz     = ([string]$szApi)
-        #         reduceOnly = $true
-        #     }
-
-        #     $resp = Send-OkxRequest -Method "POST" `
-        #         -RequestPath "/api/v5/trade/order" `
-        #         -BodyJson ($closeObj | ConvertTo-Json -Compress) `
-        #         -config $config
-
-        #     if ($resp) {
-        #         Log "LONG closed by UT SELL" "OK"
-        #     }
-        #     continue
-        # }
         } else {
-            Write-Output "No open LONG position for $instId"
+            Write-Output "No open SHORT position for $instId"
 
-            # === OPEN LONG ===
+            # === OPEN SHORT ===
             if ($buySignal -and (-not $hasShort) -and (-not $hasLong)) {
 
                 if (-not $sz -or $sz -le 0) {
-                    Log "Invalid sz — cannot open LONG" "ERROR"
+                    Log "Invalid sz — cannot open SHORT" "ERROR"
                     continue
                 }
 
-                Log "UT BUY → opening LONG" "OK"
+                Log "UT BUY → opening SHORT" "OK"
                 write-output "sz=$sz" "DEBUG"
 
                 $orderObj = @{
                     instId = $instId
                     tdMode = $config.mgnMode
-                    side   = "buy"
+                    side   = "sell"
                     ordType = "market"
                     sz = ([string]$sz)
                 }
@@ -904,7 +878,7 @@ function Run-Bot {
                     -config $config
 
                 if ($resp) {
-                    Log "LONG opened by UT BUY" "OK"
+                    Log "SHORT opened by UT BUY" "OK"
                     write-output "Order response: $($resp | ConvertTo-Json -Depth 6)" "DEBUG"
                 }
 
@@ -912,54 +886,28 @@ function Run-Bot {
             }
         }
         
-        if ($hasShort) {
-            Write-Output "📥 There is already an open SHORT position  $instId"
+        if ($hasLong) {
+            Write-Output "📥 There is already an open LONG position  $instId"
 
-            # === CLOSE SHORT BY BYU SIGNAL ===
-           
-            # if ($buySignal -and $hasShort) {
-            #     Log "UT BUY → closing SHORT" "WARN"
-            #     $info = Get-InstrumentInfo -instId $instId -config $config
-            #     $ctVal = if ($info.ctVal) { [decimal]$info.ctVal } else { 1 }
-            #     $szApi = [math]::Round($posSize * $ctVal, 8)
-            #     $closeObj = @{
-            #         instId = $instId
-            #         tdMode = $config.mgnMode
-            #         side   = "buy"
-            #         ordType = "market"
-            #         sz     = ([string]$szApi)
-            #         reduceOnly = $true
-            #     }
-
-            #     $resp = Send-OkxRequest -Method "POST" `
-            #         -RequestPath "/api/v5/trade/order" `
-            #         -BodyJson ($closeObj | ConvertTo-Json -Compress) `
-            #         -config $config
-
-            #     if ($resp) {
-            #         Log "SHORT closed by UT BUY" "OK"
-            #     }
-            #     continue
-            # }
 
         } else {
-            Write-Output "No open SHORT position for $instId"
+            Write-Output "No open LONG position for $instId"
 
-            # === OPEN SHORT ===
+            # === OPEN LONG ===
             if ($sellSignal -and (-not $hasShort) -and (-not $hasLong)) {
 
                 if (-not $sz -or $sz -le 0) {
-                    Log "Invalid sz — cannot open SHORT" "ERROR"
+                    Log "Invalid sz — cannot open LONG" "ERROR"
                     continue
                 }
 
-                Log "UT SELL → opening SHORT" "OK"
+                Log "UT SELL → opening LONG" "OK"
                 write-output "sz=$sz" "DEBUG"
 
                 $orderObj = @{
                     instId = $instId
                     tdMode = $config.mgnMode
-                    side   = "sell"
+                    side   = "buy"
                     ordType = "market"
                     sz = ([string]$sz)
                 }
