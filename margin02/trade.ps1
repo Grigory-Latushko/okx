@@ -588,10 +588,10 @@ function Run-Bot {
             # Write-Output "Profit from entry: $profit"
 
             $profitPct = [math]::Round(($profit / $entryPx) * 100, 2)
-            Write-Output "Current Profit%: $profitPct %"
+            Write-Output "Current Profit%: 💰 $profitPct %"
 
             $targetProfit = $atr_pct_rounded * $tp_atr_multiplier
-            write-output "Target profit % $targetProfit"
+            write-output "Target profit % 🎯 $targetProfit"
 
             $ProfitToDo = $targetProfit - $profitPct
             write-output "🎯 Profit to target TP% 🚀 $ProfitToDo%"
@@ -614,7 +614,7 @@ function Run-Bot {
                 $ctVal = [decimal]$info.ctVal
                 $szApi = [math]::Abs([math]::Round($posSize * $ctVal, 8))
 
-                Write-Output "💸 Placing trailing stop"
+                Write-Output "💸💸💸 Placing trailing stop"
 
                 # ATR
                 $callback = $callback_atr_multiplier * $atrDec
@@ -703,13 +703,13 @@ function Run-Bot {
             # Write-Output "Profit from entry: $profit"
 
             $profitPct = [math]::Round(($profit / $entryPx) * 100, 2)
-            Write-Output "Current Profit%: $profitPct %"
+            Write-Output "Current Profit%: 💰 $profitPct %"
 
             $targetProfit = $atr_pct_rounded * $tp_atr_multiplier
-            write-output "Target profit % $targetProfit"
+            write-output "Target profit % 🎯 $targetProfit"
 
             $ProfitToDo = $targetProfit - $profitPct
-            write-output "🎯 Profit to target TP% 🚀 $ProfitToDo%"
+            write-output "Profit to target TP% 🚀 $ProfitToDo%"
 
             $trailingOrders  = Get-ActiveAlgoOrders -instId $instId -config $config -ordType "move_order_stop"
             if ($trailingOrders.Count -gt 0) {
@@ -727,7 +727,7 @@ function Run-Bot {
                 $ctVal = [decimal]$info.ctVal
                 $szApi = [math]::Abs([math]::Round($posSize * $ctVal, 8))
 
-                Write-Output "💸 Placing trailing stop"
+                Write-Output "💸💸💸 Placing trailing stop"
 
                 $callback = $callback_atr_multiplier * $atrDec
 
