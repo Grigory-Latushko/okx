@@ -607,7 +607,8 @@ function Run-Bot {
 
             # старт Profit and Loss трейлингов
             # if (($profit -ge ($atrDec*$tp_atr_multiplier)) -and ($trailingOrders.Count -eq 0)) {
-            if (($trailingOrders.Count -lt 2)) {
+            # FIXED: было -lt 2, теперь -eq 0
+            if (($trailingOrders.Count -eq 0)) {
                
                 # размер позиции
                 $ctVal = [decimal]$info.ctVal
@@ -712,7 +713,8 @@ function Run-Bot {
 
             # старт Profit and Loss трейлингов
             # if (($profit -ge ($atrDec*$tp_atr_multiplier)) -and ($trailingOrders.Count -eq 0)) {
-            if (($trailingOrders.Count -lt 2)) {
+            # FIXED: было -lt 2, теперь -eq 0
+            if (($trailingOrders.Count -eq 0)) {
                
                 # размер позиции
                 $ctVal = [decimal]$info.ctVal
@@ -728,8 +730,6 @@ function Run-Bot {
                 $callbackRatio = [math]::Round($callback / $currentPx, 6)
 
                 $activePxTP = $entryPx - ($tp_atr_multiplier * $atrDec)
-
-                Write-Output "TP activation price = $activePxTP"
 
                 $trailingOrder = @{
                     instId = $instId
@@ -846,13 +846,14 @@ function Run-Bot {
                     continue
                 }
 
-                Log "UT BUY → opening SHORT" "OK"
+                # FIXED: BUY → LONG (было SHORT)
+                Log "UT BUY → opening LONG" "OK"
                 write-output "sz=$sz" "DEBUG"
 
                 $orderObj = @{
                     instId = $instId
                     tdMode = $config.mgnMode
-                    side   = "sell"
+                    side   = "buy"
                     ordType = "market"
                     sz = ([string]$sz)
                 }
@@ -863,7 +864,7 @@ function Run-Bot {
                     -config $config
 
                 if ($resp) {
-                    Log "SHORT opened by UT BUY" "OK"
+                    Log "LONG opened by UT BUY" "OK"
                     write-output "Order response: $($resp | ConvertTo-Json -Depth 6)" "DEBUG"
                 }
                 continue
@@ -884,13 +885,14 @@ function Run-Bot {
                     continue
                 }
 
-                Log "UT SELL → opening LONG" "OK"
+                # FIXED: SELL → SHORT (было LONG)
+                Log "UT SELL → opening SHORT" "OK"
                 write-output "sz=$sz" "DEBUG"
 
                 $orderObj = @{
                     instId = $instId
                     tdMode = $config.mgnMode
-                    side   = "buy"
+                    side   = "sell"
                     ordType = "market"
                     sz = ([string]$sz)
                 }

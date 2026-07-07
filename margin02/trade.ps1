@@ -867,13 +867,14 @@ function Run-Bot {
                         continue
                     }
 
-                    Log "UT BUY → opening SHORT" "OK"
+                    # FIXED: BUY → LONG (было SHORT)
+                    Log "UT BUY → opening LONG" "OK"
                     write-output "sz=$sz" "DEBUG"
 
                     $orderObj = @{
                         instId = $instId
                         tdMode = $config.mgnMode
-                        side   = "sell"
+                        side   = "buy"
                         ordType = "market"
                         sz = ([string]$sz)
                     }
@@ -884,7 +885,7 @@ function Run-Bot {
                         -config $config
 
                     if ($resp) {
-                        Log "SHORT opened by UT BUY" "OK"
+                        Log "LONG opened by UT BUY" "OK"
                         write-output "Order response: $($resp | ConvertTo-Json -Depth 6)" "DEBUG"
                     }
                     continue
@@ -910,13 +911,14 @@ function Run-Bot {
                         continue
                     }
 
-                    Log "UT SELL → opening LONG" "OK"
+                    # FIXED: SELL → SHORT (было LONG)
+                    Log "UT SELL → opening SHORT" "OK"
                     write-output "sz=$sz" "DEBUG"
 
                     $orderObj = @{
                         instId = $instId
                         tdMode = $config.mgnMode
-                        side   = "buy"
+                        side   = "sell"
                         ordType = "market"
                         sz = ([string]$sz)
                     }

@@ -930,19 +930,8 @@ function Run-Bot {
                 ($rsi6Live -gt $rsi6_max)
         }
 
-        # ===== ТРЕЙД-СИГНАЛЫ (3x RSI check) =====
-
-        $longSignal =
-            $ut.Buy -and
-            ($rsi6Prev -lt $rsi6_min) -and
-            ($rsi6Curr -lt $rsi6_min) -and
-            ($rsi6Live -lt $rsi6_min)
-
-        $shortSignal =
-            $ut.Sell -and
-            ($rsi6Prev -gt $rsi6_max) -and
-            ($rsi6Curr -gt $rsi6_max) -and
-            ($rsi6Live -gt $rsi6_max)
+        # FIXED: удален дублирующий блок который обращался к $ut.Buy без проверки $null
+        # Сигналы уже вычислены выше в блоке if ($use_ut_bot) / else
 
         if (-not $longSignal -and -not ($shortSignal -and $allow_shorts)) {
             Log "No trading signal for $instId — skipping" "WARN"
