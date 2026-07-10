@@ -5,7 +5,7 @@ param(
 
 # Имя лог-файла формируется на основе имени файла конфига
 $logFileName = [IO.Path]::GetFileNameWithoutExtension($configPath)
-$logFile = ".\${logFileName}_trades.log"
+$logFile = ".\${logFileName}_trades_EMA+RSI_LIMITED.log"
 
 $config = Get-Content $configPath | ConvertFrom-Json
 
@@ -16,6 +16,7 @@ $global:totalPnL = 0
 $global:winCount = 0
 $global:totalClosed = 0
 $commissionRate = 0.0009  # 0.09%
+$evaluate_candle_period = $config.evaluate_candle_period
 
 # Добавляем глобальные счетчики для винрейта по инструментам
 $global:instrumentTotal = @{}
@@ -33,15 +34,16 @@ function LogConsole($msg, $type = "INFO") {
 }
 
 function LogTradeWithWinRate($pos, $reason, $winRate) {
-    $openedAtStr = Format-Time-FromTS $pos.OpenedAt
-    $closedAtStr = Format-Time-FromTS $pos.ClosedAt
+    # $openedAtStr = Format-Time-FromTS $pos.OpenedAt
+    # $closedAtStr = Format-Time-FromTS $pos.ClosedAt
     $timestamp = Format-Time
 
     $logEntry = "[${timestamp}][TRADE] Закрыта позиция $($pos.Symbol) $($pos.Side) PnL: $($pos.PnL) Причина: $reason Баланс: $($global:balance) WinRate инструмента: $winRate%`n" +
-                "  Открытие:     $openedAtStr`n" +
-                "  Закрытие:     $closedAtStr`n" +
-                "  Цена входа:   $($pos.EntryPrice)`n" +
-                "  Цена выхода:  $($pos.ExitPrice)`n"
+                # "  Открытие:     $openedAtStr`n" +
+                # "  Закрытие:     $closedAtStr`n" +
+                # "  Цена входа:   $($pos.EntryPrice)`n" +
+                # "  Цена выхода:  $($pos.ExitPrice)`n" +
+                "🔄 Баланс: $($global:balance)$ | PnL: $($global:totalPnL) 💵 | Сделок: $global:totalClosed"
 
     Add-Content -Path $logFile -Value $logEntry
 }
@@ -120,8 +122,125 @@ function Calculate-ATR($candles, $period = 14) {
     return $atr
 }
 
+function Calculate-RSI($prices, $period = 14) {
+    if ($prices.Count -le $period) { return @() }
+
+    $gains = @()
+    $losses = @()
+
+    for ($i = 1; $i -lt $prices.Count; $i++) {
+        $change = $prices[$i] - $prices[$i - 1]
+        if ($change -gt 0) {
+            $gains += $change
+            $losses += 0
+        } else {
+            $gains += 0
+            $losses += [Math]::Abs($change)
+        }
+    }
+
+    $avgGain = ($gains[0..($period-1)] | Measure-Object -Sum).Sum / $period
+    $avgLoss = ($losses[0..($period-1)] | Measure-Object -Sum).Sum / $period
+
+    $rsi = @()
+    $rsi += [Math]::Round(100 - (100 / (1 + ($avgGain / [Math]::Max($avgLoss, 0.0000001)))), 3)
+
+    for ($i = $period; $i -lt $gains.Count; $i++) {
+        $avgGain = (($avgGain * ($period - 1)) + $gains[$i]) / $period
+        $avgLoss = (($avgLoss * ($period - 1)) + $losses[$i]) / $period
+
+        if ($avgLoss -eq 0) {
+            $rs = [double]::PositiveInfinity
+        } else {
+            $rs = $avgGain / $avgLoss
+        }
+
+        $rsi += [Math]::Round(100 - (100 / (1 + $rs)), 3)
+    }
+
+    return $rsi
+}
+
+function Calculate-ConnorsRSI {
+    param(
+        [double[]]$closes,
+        [int]$rsiPeriod = 3,        # RSI по цене
+        [int]$streakPeriod = 2,     # RSI по стрику
+        [int]$rankPeriod = 100      # PercentRank
+    )
+
+    if ($closes.Count -lt ($rankPeriod + 2)) {
+        return @()
+    }
+
+    # === 1. RSI по цене ===
+    $rsiPrice = Calculate-RSI $closes $rsiPeriod
+
+    # === 2. Streak (подсчет последовательных свечей роста/падения) ===
+    $streaks = @()
+    $streak = 0
+    for ($i = 1; $i -lt $closes.Count; $i++) {
+        if ($closes[$i] -gt $closes[$i-1]) {
+            $streak = if ($streak -ge 0) { $streak + 1 } else { 1 }
+        } elseif ($closes[$i] -lt $closes[$i-1]) {
+            $streak = if ($streak -le 0) { $streak - 1 } else { -1 }
+        } else {
+            $streak = 0
+        }
+        $streaks += $streak
+    }
+
+    # для стрика считаем RSI (по модулю изменений)
+    $streakRSI = Calculate-RSI ($streaks | ForEach-Object { [math]::Abs($_) }) $streakPeriod
+
+    # === 3. PercentRank of Change ===
+    $changes = @()
+    for ($i = 1; $i -lt $closes.Count; $i++) {
+        $changes += (($closes[$i] - $closes[$i-1]) / $closes[$i-1]) * 100
+    }
+
+    $percentRank = @()
+    for ($i = $rankPeriod; $i -lt $changes.Count; $i++) {
+        $window = $changes[($i-$rankPeriod+1)..$i]
+        $current = $changes[$i]
+        $less = ($window | Where-Object { $_ -lt $current }).Count
+        $percentRank += [math]::Round(($less / $window.Count) * 100, 2)
+    }
+
+    # === 4. Совмещаем все 3 компонента ===
+    $minLen = ($rsiPrice.Count, $streakRSI.Count, $percentRank.Count | Measure-Object -Minimum).Minimum
+    $crsi = @()
+    for ($i = 0; $i -lt $minLen; $i++) {
+        $crsi += [Math]::Round(($rsiPrice[-$minLen+$i] + $streakRSI[-$minLen+$i] + $percentRank[-$minLen+$i]) / 3, 2)
+    }
+
+    return $crsi
+}
+
+function Get-Trend($candles, $atrPeriod = 14, $trend_candles) {
+    if ($candles.Count -lt 14) { return "FLAT" }
+
+    # Берём 4 последних свечей
+    $lastCloses = ($candles | Sort-Object Timestamp | Select-Object -Last $trend_candles | ForEach-Object { $_.Close })
+
+    # Разница между последней и trend_candles с конца
+    $delta = $lastCloses[-1] - $lastCloses[0]
+
+    # ATR для тренда (можно взять последний ATR)
+    $atrArr = Calculate-ATR $candles $atrPeriod
+    if ($atrArr.Count -eq 0) { return "FLAT" }
+    $atr = $atrArr[-1]
+
+    if ($delta -gt $atr) {
+        return "UP"
+    } elseif ($delta -lt -$atr) {
+        return "DOWN"
+    } else {
+        return "FLAT"
+    }
+}
+
 # === TRADE LOGIC ===
-$commissionRate = 0.0009  # 0.09%
 
 function Open-Position($symbol, $entryPrice, $size, $atr, $tpMultiplier, $slMultiplier, $side = "LONG") {
     if ($side -eq "LONG") {
@@ -135,9 +254,9 @@ function Open-Position($symbol, $entryPrice, $size, $atr, $tpMultiplier, $slMult
         return
     }
 
-    $positionCost = $entryPrice * $size
+    $positionCost   = $entryPrice * $size
     $commissionOpen = $positionCost * $commissionRate
-    $totalCost = $positionCost + $commissionOpen
+    $totalCost      = $positionCost + $commissionOpen
 
     if ($global:balance -lt $totalCost) {
         LogConsole "Недостаточно баланса для открытия позиции $symbol требуется $totalCost$, доступно $($global:balance)$" "WARN"
@@ -161,7 +280,7 @@ function Open-Position($symbol, $entryPrice, $size, $atr, $tpMultiplier, $slMult
     }
 
     $global:positions[$symbol] = $position
-    LogConsole "Открыта $side позиция ${symbol}: по $entryPrice (TP: $tp, SL: $sl, Size: $size), списано с баланса: $totalCost$" $side
+    LogConsole "🚀 Открыта $side позиция ${symbol}: по $entryPrice (TP: $tp, SL: $sl, Size: $size), списано с баланса: $totalCost$" $side
 }
 
 function Close-Position($symbol, $exitPrice, $reason) {
@@ -207,7 +326,7 @@ function Close-Position($symbol, $exitPrice, $reason) {
         $instrumentWinRate = [Math]::Round(($global:instrumentWins[$symbol] / $global:instrumentTotal[$symbol]) * 100, 2)
     }
 
-    LogConsole "Закрыта позиция ${symbol} ($($pos.Side)): по $exitPrice | PnL: $pnlRounded | Причина: $reason | Баланс: $($global:balance) | Сделок: $global:totalClosed | WinRate инструмента: $instrumentWinRate%" "CLOSE"
+    LogConsole "✅ Закрыта позиция ${symbol} ($($pos.Side)): по $exitPrice | PnL: $pnlRounded | Причина: $reason | Баланс: $($global:balance) | Сделок: $global:totalClosed | WinRate инструмента: $instrumentWinRate%" "CLOSE"
     LogTradeWithWinRate $pos $reason $instrumentWinRate
 
     $global:positions.Remove($symbol)
@@ -219,7 +338,7 @@ function Evaluate-Position($symbol) {
     $pos = $global:positions[$symbol]
     if ($pos.Status -ne "OPEN") { return }
 
-    $candles = Get-Candles $symbol 100 "5m"   # 100 последних 5 минутных свечей
+    $candles = Get-Candles $symbol 100 $evaluate_candle_period   # 100 последних $evaluate_candle_period минутных свечей
     if ($candles.Count -eq 0) { return }
 
     $openedAtTimestamp = $pos.OpenedAt
@@ -271,40 +390,74 @@ function Run-Bot {
             $candles = Get-Candles $symbol $config.candle_limit $config.candle_period
             if ($candles.Count -lt 50) { continue }
 
-            $closes = $candles | ForEach-Object { $_.Close }
+            # $closes = $candles | ForEach-Object { $_.Close }
+            $closes = ($candles | Sort-Object Timestamp) | ForEach-Object { $_.Close }
 
-            $ema9 = Calculate-EMA $closes 9
+            $ema9  = Calculate-EMA $closes 9
             $ema21 = Calculate-EMA $closes 21
+
+        # Получаем массив RSI
+            # $rsiArr = Calculate-RSI $closes 14
+            # if ($rsiArr.Count -lt 2) { continue }
+
+            # # Предыдущее и текущее значение RSI
+            # $rsiPrev = $rsiArr[-2]
+            # $rsiCurr = $rsiArr[-1]
+
+        # Connors RSI вместо обычного RSI
+            $rsiArr = Calculate-ConnorsRSI -closes $closes -rsiPeriod 3 -streakPeriod 2 -rankPeriod 100
+            if ($rsiArr.Count -lt 2) { continue }
+
+            $rsiPrev = $rsiArr[-2]
+            $rsiCurr = $rsiArr[-1]
 
             $atrArr = Calculate-ATR $candles 14
             if ($atrArr.Count -eq 0) { continue }
             $atr = $atrArr[-1]
 
-            # LONG
-            $emaCrossUp = ($ema9[-1] -gt $ema21[-1]) -and ($ema9[-2] -le $ema21[-2])
-            $ema21TrendUp = $ema21[-1] -gt $ema21[-6]
-
-            # SHORT
-            $emaCrossDown = ($ema9[-1] -lt $ema21[-1]) -and ($ema9[-2] -ge $ema21[-2])
-            $ema21TrendDown = $ema21[-1] -lt $ema21[-6]
-
             $price = Get-Last-Tick $symbol
             if ($null -eq $price) { continue }
 
             $size = [Math]::Round($config.position_size_usd / $price, 4)
+            $tpMultiplier = $config.tp_percent
+            $slMultiplier = $config.sl_percent
+            $lastEMA21 = $ema21[-1]
+            $min_RSI = $config.min_RSI
+            $max_RSI = $config.max_RSI
+            $trend_candles = $config.trend_candles
 
-            $tpMultiplier = 2
-            $slMultiplier = 1
+        # Условия входа по пересечению RSI
 
-            if ($emaCrossUp -and $ema21TrendUp) {
-                Open-Position $symbol $price $size $atr $tpMultiplier $slMultiplier "SHORT"
-            } elseif ($emaCrossDown -and $ema21TrendDown) {
+            $trend = Get-Trend -candles $candles -atrPeriod 14 -trend_candles $trend_candles
+            $longSignal  = $price -gt $ema21[-1] -and ($rsiCurr -le $min_RSI) -and ($trend -eq "UP")
+            $shortSignal = $price -lt $ema21[-1] -and ($rsiCurr -ge $max_RSI) -and ($trend -eq "DOWN")
+
+            if ($longSignal) {
+                # LogConsole "$symbol → Открытие 📈 LONG: RSI пересек min_RSI ($($config.min_RSI)) снизу вверх: $rsiPrev → $rsiCurr EMA21 = $lastEMA21" "SIGNAL"
+                LogConsole "$symbol → Открытие 📈 LONG: RSI = $rsiCurr EMA21 = $lastEMA21" "SIGNAL"
                 Open-Position $symbol $price $size $atr $tpMultiplier $slMultiplier "LONG"
+
+            } elseif ($shortSignal) {
+                # LogConsole "$symbol → Открытие 📉 SHORT: RSI пересек max_RSI ($($config.max_RSI)) сверху вниз: $rsiPrev → $rsiCurr EMA21 = $lastEMA21" "SIGNAL"
+                LogConsole "$symbol → Открытие 📉 SHORT: RSI = $rsiCurr EMA21 = $lastEMA21" "SIGNAL"
+                Open-Position $symbol $price $size $atr $tpMultiplier $slMultiplier "SHORT"
+
+            } else {
+                $reasons = @()
+                if (-not $longSignal -and -not $shortSignal) { $reasons += "нет пересечения RSI" }
+                if ($price -le $lastEMA21 -and $rsiCurr -ge $min_RSI) { $reasons += "цена ниже EMA21 для LONG" }
+                if ($price -ge $lastEMA21 -and $rsiCurr -le $max_RSI) { $reasons += "цена выше EMA21 для SHORT" }
+
+                if ($reasons.Count -gt 0) {
+                    # LogConsole "$symbol → Сделка не открыта: $($reasons -join ', ')" "NO-TRADE"
+                    # Write-Host "price= $price lastEMA21= $lastEMA21 rsiCurr= $rsiCurr rsiPrev= $rsiPrev"
+                }
             }
+
         } else {
             Evaluate-Position $symbol
         }
-        Start-Sleep -Milliseconds 200
+        Start-Sleep -Milliseconds 100
     }
 }
 
