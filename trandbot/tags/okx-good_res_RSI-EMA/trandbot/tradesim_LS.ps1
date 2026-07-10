@@ -5,7 +5,7 @@ param(
 
 # Имя лог-файла формируется на основе имени файла конфига
 $logFileName = [IO.Path]::GetFileNameWithoutExtension($configPath)
-$logFile = ".\${logFileName}_trades_EMA+RSI_LIMITED.log"
+$logFile = ".\${logFileName}_trades.log"
 
 $config = Get-Content $configPath | ConvertFrom-Json
 
@@ -161,86 +161,8 @@ function Calculate-RSI($prices, $period = 14) {
     return $rsi
 }
 
-function Calculate-ConnorsRSI {
-    param(
-        [double[]]$closes,
-        [int]$rsiPeriod = 3,        # RSI по цене
-        [int]$streakPeriod = 2,     # RSI по стрику
-        [int]$rankPeriod = 100      # PercentRank
-    )
-
-    if ($closes.Count -lt ($rankPeriod + 2)) {
-        return @()
-    }
-
-    # === 1. RSI по цене ===
-    $rsiPrice = Calculate-RSI $closes $rsiPeriod
-
-    # === 2. Streak (подсчет последовательных свечей роста/падения) ===
-    $streaks = @()
-    $streak = 0
-    for ($i = 1; $i -lt $closes.Count; $i++) {
-        if ($closes[$i] -gt $closes[$i-1]) {
-            $streak = if ($streak -ge 0) { $streak + 1 } else { 1 }
-        } elseif ($closes[$i] -lt $closes[$i-1]) {
-            $streak = if ($streak -le 0) { $streak - 1 } else { -1 }
-        } else {
-            $streak = 0
-        }
-        $streaks += $streak
-    }
-
-    # для стрика считаем RSI (по модулю изменений)
-    $streakRSI = Calculate-RSI ($streaks | ForEach-Object { [math]::Abs($_) }) $streakPeriod
-
-    # === 3. PercentRank of Change ===
-    $changes = @()
-    for ($i = 1; $i -lt $closes.Count; $i++) {
-        $changes += (($closes[$i] - $closes[$i-1]) / $closes[$i-1]) * 100
-    }
-
-    $percentRank = @()
-    for ($i = $rankPeriod; $i -lt $changes.Count; $i++) {
-        $window = $changes[($i-$rankPeriod+1)..$i]
-        $current = $changes[$i]
-        $less = ($window | Where-Object { $_ -lt $current }).Count
-        $percentRank += [math]::Round(($less / $window.Count) * 100, 2)
-    }
-
-    # === 4. Совмещаем все 3 компонента ===
-    $minLen = ($rsiPrice.Count, $streakRSI.Count, $percentRank.Count | Measure-Object -Minimum).Minimum
-    $crsi = @()
-    for ($i = 0; $i -lt $minLen; $i++) {
-        $crsi += [Math]::Round(($rsiPrice[-$minLen+$i] + $streakRSI[-$minLen+$i] + $percentRank[-$minLen+$i]) / 3, 2)
-    }
-
-    return $crsi
-}
-
-function Get-Trend($candles, $atrPeriod = 14, $trend_candles) {
-    if ($candles.Count -lt 14) { return "FLAT" }
-
-    # Берём 4 последних свечей
-    $lastCloses = ($candles | Sort-Object Timestamp | Select-Object -Last $trend_candles | ForEach-Object { $_.Close })
-
-    # Разница между последней и trend_candles с конца
-    $delta = $lastCloses[-1] - $lastCloses[0]
-
-    # ATR для тренда (можно взять последний ATR)
-    $atrArr = Calculate-ATR $candles $atrPeriod
-    if ($atrArr.Count -eq 0) { return "FLAT" }
-    $atr = $atrArr[-1]
-
-    if ($delta -gt $atr) {
-        return "UP"
-    } elseif ($delta -lt -$atr) {
-        return "DOWN"
-    } else {
-        return "FLAT"
-    }
-}
-
 # === TRADE LOGIC ===
+$commissionRate = 0.0009  # 0.09%
 
 function Open-Position($symbol, $entryPrice, $size, $atr, $tpMultiplier, $slMultiplier, $side = "LONG") {
     if ($side -eq "LONG") {
@@ -254,9 +176,9 @@ function Open-Position($symbol, $entryPrice, $size, $atr, $tpMultiplier, $slMult
         return
     }
 
-    $positionCost   = $entryPrice * $size
+    $positionCost = $entryPrice * $size
     $commissionOpen = $positionCost * $commissionRate
-    $totalCost      = $positionCost + $commissionOpen
+    $totalCost = $positionCost + $commissionOpen
 
     if ($global:balance -lt $totalCost) {
         LogConsole "Недостаточно баланса для открытия позиции $symbol требуется $totalCost$, доступно $($global:balance)$" "WARN"
@@ -282,7 +204,6 @@ function Open-Position($symbol, $entryPrice, $size, $atr, $tpMultiplier, $slMult
     $global:positions[$symbol] = $position
     LogConsole "🚀 Открыта $side позиция ${symbol}: по $entryPrice (TP: $tp, SL: $sl, Size: $size), списано с баланса: $totalCost$" $side
 }
-
 function Close-Position($symbol, $exitPrice, $reason) {
     $pos = $global:positions[$symbol]
 
@@ -390,24 +311,16 @@ function Run-Bot {
             $candles = Get-Candles $symbol $config.candle_limit $config.candle_period
             if ($candles.Count -lt 50) { continue }
 
-            # $closes = $candles | ForEach-Object { $_.Close }
-            $closes = ($candles | Sort-Object Timestamp) | ForEach-Object { $_.Close }
+            $closes = $candles | ForEach-Object { $_.Close }
 
             $ema9  = Calculate-EMA $closes 9
             $ema21 = Calculate-EMA $closes 21
 
-        # Получаем массив RSI
-            # $rsiArr = Calculate-RSI $closes 14
-            # if ($rsiArr.Count -lt 2) { continue }
-
-            # # Предыдущее и текущее значение RSI
-            # $rsiPrev = $rsiArr[-2]
-            # $rsiCurr = $rsiArr[-1]
-
-        # Connors RSI вместо обычного RSI
-            $rsiArr = Calculate-ConnorsRSI -closes $closes -rsiPeriod 3 -streakPeriod 2 -rankPeriod 100
+            # Получаем массив RSI
+            $rsiArr = Calculate-RSI $closes 14
             if ($rsiArr.Count -lt 2) { continue }
 
+            # Предыдущее и текущее значение RSI
             $rsiPrev = $rsiArr[-2]
             $rsiCurr = $rsiArr[-1]
 
@@ -421,37 +334,23 @@ function Run-Bot {
             $size = [Math]::Round($config.position_size_usd / $price, 4)
             $tpMultiplier = $config.tp_percent
             $slMultiplier = $config.sl_percent
-            $lastEMA21 = $ema21[-1]
-            $min_RSI = $config.min_RSI
-            $max_RSI = $config.max_RSI
-            $trend_candles = $config.trend_candles
 
-        # Условия входа по пересечению RSI
-
-            $trend = Get-Trend -candles $candles -atrPeriod 14 -trend_candles $trend_candles
-            $longSignal  = $price -gt $ema21[-1] -and ($rsiCurr -le $min_RSI) -and ($trend -eq "UP")
-            $shortSignal = $price -lt $ema21[-1] -and ($rsiCurr -ge $max_RSI) -and ($trend -eq "DOWN")
+            # Условия входа по пересечению RSI
+            $longSignal  = ($rsiPrev -lt $config.min_RSI) -and ($rsiCurr -ge $config.min_RSI) -and ($Close -gt $EMA21)
+            $shortSignal = ($rsiPrev -gt $config.max_RSI) -and ($rsiCurr -le $config.max_RSI) -and ($Close -lt $EMA21)
 
             if ($longSignal) {
-                # LogConsole "$symbol → Открытие 📈 LONG: RSI пересек min_RSI ($($config.min_RSI)) снизу вверх: $rsiPrev → $rsiCurr EMA21 = $lastEMA21" "SIGNAL"
-                LogConsole "$symbol → Открытие 📈 LONG: RSI = $rsiCurr EMA21 = $lastEMA21" "SIGNAL"
+                LogConsole "$symbol → Открытие 📈 LONG: RSI пересек min_RSI ($($config.min_RSI)) снизу вверх: $rsiPrev → $rsiCurr" "SIGNAL"
                 Open-Position $symbol $price $size $atr $tpMultiplier $slMultiplier "LONG"
 
             } elseif ($shortSignal) {
-                # LogConsole "$symbol → Открытие 📉 SHORT: RSI пересек max_RSI ($($config.max_RSI)) сверху вниз: $rsiPrev → $rsiCurr EMA21 = $lastEMA21" "SIGNAL"
-                LogConsole "$symbol → Открытие 📉 SHORT: RSI = $rsiCurr EMA21 = $lastEMA21" "SIGNAL"
+                LogConsole "$symbol → Открытие 📉 SHORT: RSI пересек max_RSI ($($config.max_RSI)) сверху вниз: $rsiPrev → $rsiCurr" "SIGNAL"
                 Open-Position $symbol $price $size $atr $tpMultiplier $slMultiplier "SHORT"
 
             } else {
                 $reasons = @()
                 if (-not $longSignal -and -not $shortSignal) { $reasons += "нет пересечения RSI" }
-                if ($price -le $lastEMA21 -and $rsiCurr -ge $min_RSI) { $reasons += "цена ниже EMA21 для LONG" }
-                if ($price -ge $lastEMA21 -and $rsiCurr -le $max_RSI) { $reasons += "цена выше EMA21 для SHORT" }
-
-                if ($reasons.Count -gt 0) {
-                    # LogConsole "$symbol → Сделка не открыта: $($reasons -join ', ')" "NO-TRADE"
-                    # Write-Host "price= $price lastEMA21= $lastEMA21 rsiCurr= $rsiCurr rsiPrev= $rsiPrev"
-                }
+                # LogConsole "$symbol → Сделка не открыта: $($reasons -join ', ')" "NO-TRADE"
             }
 
         } else {
