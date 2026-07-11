@@ -46,7 +46,11 @@ function Send-OkxRequest {
     $url = $config.baseUrl.TrimEnd('/') + $RequestPath
     Log "Request: $Method $url" "DEBUG"
     Log "Body: $BodyJson" "DEBUG"
-    if ($config.dryRun -and -not $ForceLive) { Log "DryRun — запрос не отправлен" "WARN"; return @{ dryRun = $true; method = $Method; url = $url; body = $BodyJson } }
+    # FIXED: dryRun блокирует только POST (ордера), GET-запросы (цены, инфо) всегда выполняются
+    if ($config.dryRun -and -not $ForceLive -and $Method.ToUpper() -eq "POST") {
+        Log "DryRun — POST запрос не отправлен: $RequestPath" "WARN"
+        return @{ dryRun = $true; method = $Method; url = $url; body = $BodyJson }
+    }
     try {
         if ($Method.ToUpper() -eq "GET") { $resp = Invoke-RestMethod -Method Get  -Uri $url -Headers $headers -ErrorAction Stop }
         else                             { $resp = Invoke-RestMethod -Method Post -Uri $url -Headers $headers -Body $BodyJson -ErrorAction Stop }
@@ -107,10 +111,48 @@ function Get-ActiveAlgoOrders {
     return $resp.data
 }
 
+# ---------------- логирование сделок ----------------
+function Write-TradeLog {
+    param(
+        [string]$event,      # OPEN_PAIR, CLOSE_BTC, CLOSE_ETH
+        [string]$instId,
+        [string]$side,       # LONG, SHORT
+        [decimal]$price,
+        [decimal]$sz,
+        [decimal]$atr        = 0,
+        [decimal]$atrPct     = 0,
+        [decimal]$tp         = 0,
+        [decimal]$sl         = 0,
+        [decimal]$pnl        = 0,
+        [decimal]$pnlPct     = 0,
+        [string]$closeReason = "",
+        $config
+    )
+
+    $logFile = if ($config.log_file) { $config.log_file } else { ".\trades.csv" }
+
+    # Создаём заголовок если файл не существует
+    if (-not (Test-Path $logFile)) {
+        $header = "timestamp,event,instId,side,price,sz,atr,atr_pct,tp,sl,pnl,pnl_pct,close_reason"
+        $header | Out-File -FilePath $logFile -Encoding utf8 -NoNewline
+        "`n" | Out-File -FilePath $logFile -Encoding utf8 -Append -NoNewline
+    }
+
+    $ts  = (Get-Date).ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss")
+    $row = "$ts,$event,$instId,$side,$price,$sz,$atr,$atrPct,$tp,$sl,$pnl,$pnlPct,$closeReason"
+    $row | Out-File -FilePath $logFile -Encoding utf8 -Append -NoNewline
+    "`n" | Out-File -FilePath $logFile -Encoding utf8 -Append -NoNewline
+
+    Log "📝 Logged: $event $instId $side @ $price PnL=$pnl ($pnlPct%)" "OK"
+}
+
 function Get-PositionSize {
     param([string]$instId, $config, [string]$posSide = "long")
+    Log "Get-PositionSize: получаем info для $instId" "DEBUG"
     $info  = Get-InstrumentInfo -instId $instId -config $config
+    Log "Get-PositionSize: info=$(if ($info) { 'OK ctVal=' + $info.ctVal } else { 'NULL' })" "DEBUG"
     $price = Get-Price -instId $instId -config $config
+    Log "Get-PositionSize: price=$(if ($price) { $price } else { 'NULL' })" "DEBUG"
     if (-not $info -or -not $price) { Log "Не удалось получить info/price для $instId" "ERROR"; return $null }
 
     $ctVal = if ($info.ctVal) { [decimal]$info.ctVal } else { 1 }
@@ -244,6 +286,11 @@ function Open-PairOrders {
     $btcPrice=$btcData.price; $ethPrice=$ethData.price
     $btcInfo=$btcData.info;  $ethInfo=$ethData.info
     $tpMult=[decimal]$config.tp_atr_multiplier; $slMult=[decimal]$config.sl_atr_multiplier
+
+    $btcAtrPct = [math]::Round(($btcAtr / $btcPrice) * 100, 4)
+    $ethAtrPct = [math]::Round(($ethAtr / $ethPrice) * 100, 4)
+    Write-Output "  BTC ATR=$btcAtr ($btcAtrPct%) | TP offset=$(  [math]::Round($tpMult * $btcAtr, 2)) | SL offset=$([math]::Round($slMult * $btcAtr, 2))"
+    Write-Output "  ETH ATR=$ethAtr ($ethAtrPct%) | TP offset=$([math]::Round($tpMult * $ethAtr, 2)) | SL offset=$([math]::Round($slMult * $ethAtr, 2))"
     $btcTick=if($btcInfo.tickSz){[decimal]$btcInfo.tickSz}else{$null}
     $ethTick=if($ethInfo.tickSz){[decimal]$ethInfo.tickSz}else{$null}
 
@@ -272,7 +319,11 @@ function Open-PairOrders {
     $respBtc = Send-OkxRequest -Method "POST" -RequestPath "/api/v5/trade/order" -BodyJson ($btcOrder | ConvertTo-Json -Depth 10 -Compress) -config $config
     if     ($respBtc -and $respBtc.dryRun)                                { Log "DryRun: BTC LONG" "WARN" }
     elseif (-not $respBtc -or ($respBtc.code -and $respBtc.code -ne "0")) { Log "❌ BTC LONG error: $($respBtc.msg)" "ERROR"; return $false }
-    else                                                                    { Log "✅ BTC LONG открыт" "OK" }
+    else {
+        Log "✅ BTC LONG открыт" "OK"
+        Write-TradeLog -event "OPEN_PAIR" -instId $btcId -side "LONG" -price $btcPrice -sz $btcData.sz `
+            -atr $btcAtr -atrPct $btcAtrPct -tp $btcTp -sl $btcSl -config $config
+    }
 
     # === SHORT ETH ===
     $ethOrder = @{
@@ -290,7 +341,11 @@ function Open-PairOrders {
         Log "❌ ETH SHORT error: $($respEth.msg)" "ERROR"
         Log "⚠️  BTC LONG открыт, ETH SHORT не открылся — закройте BTC вручную!" "WARN"
         return $false
-    } else { Log "✅ ETH SHORT открыт" "OK" }
+    } else {
+        Log "✅ ETH SHORT открыт" "OK"
+        Write-TradeLog -event "OPEN_PAIR" -instId $ethId -side "SHORT" -price $ethPrice -sz $ethData.sz `
+            -atr $ethAtr -atrPct $ethAtrPct -tp $ethTp -sl $ethSl -config $config
+    }
 
     return $true
 }
@@ -320,6 +375,10 @@ if ($authOk) { $posMode = Get-AccountConfig -config $config }
 $btcId = $config.btc_instrument
 $ethId = $config.eth_instrument
 
+# Храним состояние позиций между циклами для детекции закрытий
+$script:prevBtcPos = $null
+$script:prevEthPos = $null
+
 function Run-Bot {
     Write-Host "`n========== PAIR BOT CYCLE ==========" -ForegroundColor Magenta
     if (-not $authOk) { Log "Auth не прошёл — пропускаем цикл" "WARN"; return }
@@ -328,6 +387,44 @@ function Run-Bot {
     $ethPos = Get-OpenPosition -instId $ethId -config $config
     $hasBtc = $null -ne $btcPos
     $hasEth = $null -ne $ethPos
+
+    # Детекция закрытия BTC позиции
+    if ($script:prevBtcPos -and -not $hasBtc) {
+        $entryPx   = [decimal]$script:prevBtcPos.data.avgPx
+        $closePx   = Get-Price -instId $btcId -config $config
+        if ($closePx) {
+            $posSize   = $script:prevBtcPos.pos
+            $isLong    = $posSize -gt 0
+            $pnl       = if ($isLong) { ($closePx - $entryPx) * [math]::Abs($posSize) } else { ($entryPx - $closePx) * [math]::Abs($posSize) }
+            $pnlPct    = [math]::Round((($closePx - $entryPx) / $entryPx) * 100 * (if ($isLong) { 1 } else { -1 }), 2)
+            $pnl       = [math]::Round($pnl, 4)
+            $reason    = if ($pnlPct -gt 0) { "TP" } else { "SL" }
+            Write-Host "  🔒 BTC позиция закрыта | entry=$entryPx close=$closePx PnL=$pnl ($pnlPct%)" -ForegroundColor $(if ($pnlPct -gt 0) { 'Green' } else { 'Red' })
+            Write-TradeLog -event "CLOSE_BTC" -instId $btcId -side $(if ($isLong) { "LONG" } else { "SHORT" }) `
+                -price $closePx -sz ([math]::Abs($posSize)) -pnl $pnl -pnlPct $pnlPct -closeReason $reason -config $config
+        }
+    }
+
+    # Детекция закрытия ETH позиции
+    if ($script:prevEthPos -and -not $hasEth) {
+        $entryPx   = [decimal]$script:prevEthPos.data.avgPx
+        $closePx   = Get-Price -instId $ethId -config $config
+        if ($closePx) {
+            $posSize   = $script:prevEthPos.pos
+            $isLong    = $posSize -gt 0
+            $pnl       = if ($isLong) { ($closePx - $entryPx) * [math]::Abs($posSize) } else { ($entryPx - $closePx) * [math]::Abs($posSize) }
+            $pnlPct    = [math]::Round((($closePx - $entryPx) / $entryPx) * 100 * (if ($isLong) { 1 } else { -1 }), 2)
+            $pnl       = [math]::Round($pnl, 4)
+            $reason    = if ($pnlPct -gt 0) { "TP" } else { "SL" }
+            Write-Host "  🔒 ETH позиция закрыта | entry=$entryPx close=$closePx PnL=$pnl ($pnlPct%)" -ForegroundColor $(if ($pnlPct -gt 0) { 'Green' } else { 'Red' })
+            Write-TradeLog -event "CLOSE_ETH" -instId $ethId -side $(if ($isLong) { "LONG" } else { "SHORT" }) `
+                -price $closePx -sz ([math]::Abs($posSize)) -pnl $pnl -pnlPct $pnlPct -closeReason $reason -config $config
+        }
+    }
+
+    # Сохраняем состояние для следующего цикла
+    $script:prevBtcPos = $btcPos
+    $script:prevEthPos = $ethPos
 
     Write-Output "BTC: $(if ($hasBtc) { '✅ pos=' + $btcPos.pos } else { '— нет позиции' })"
     Write-Output "ETH: $(if ($hasEth) { '✅ pos=' + $ethPos.pos } else { '— нет позиции' })"

@@ -1,7 +1,7 @@
 {
-  "api_key": "a2edb151-8029-4117-b450-05d06e30be80",
-  "secret_key": "4A37EE7D7E9BC76CC2B318F81DB40F45",
-  "passphrase": "your_passphrase_here",
+  "api_key": "63bc7851-8cad-45ab-90e4-dec759097eb3",
+  "secret_key": "FD79DCCA6B901C84F8075875C124DA86",
+  "passphrase": "Aa11111111!",
   "baseUrl": "https://www.okx.com",
   "simulated": false,
   "dryRun": true,
@@ -9,7 +9,7 @@
   "btc_instrument": "BTC-USDT-SWAP",
   "eth_instrument": "ETH-USDT-SWAP",
 
-  "position_size_usd": 1,
+  "position_size_usd": 0.1,
   "leverage": 10,
   "mgnMode": "isolated",
 
@@ -24,6 +24,8 @@
 
   "tp_trigger_type": "last",
   "tp_exec_market": true,
+
+  "log_file": ".\\trades.csv",
 
   "rerun_interval_s": 5
 }
