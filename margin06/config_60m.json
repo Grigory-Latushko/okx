@@ -1,0 +1,29 @@
+{
+  "api_key": "your_api_key_here",
+  "secret_key": "your_secret_key_here",
+  "passphrase": "your_passphrase_here",
+  "baseUrl": "https://www.okx.com",
+  "simulated": false,
+  "dryRun": true,
+
+  "btc_instrument": "BTC-USDT-SWAP",
+  "eth_instrument": "ETH-USDT-SWAP",
+
+  "position_size_usd": 1,
+  "leverage": 10,
+  "mgnMode": "isolated",
+
+  "candle_period": "1H",
+  "candle_limit": 100,
+  "atrPeriod": 14,
+
+  "tp_atr_multiplier": 2.0,
+  "sl_atr_multiplier": 1.0,
+  "callback_atr_multiplier": 0.2,
+  "callback_sl_atr_multiplier": 0.1,
+
+  "tp_trigger_type": "last",
+  "tp_exec_market": true,
+
+  "rerun_interval_s": 5
+}
