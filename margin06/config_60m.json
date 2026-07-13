@@ -4,12 +4,12 @@
   "passphrase": "Aa11111111!",
   "baseUrl": "https://www.okx.com",
   "simulated": false,
-  "dryRun": true,
+  "dryRun": false,
 
   "btc_instrument": "BTC-USDT-SWAP",
   "eth_instrument": "ETH-USDT-SWAP",
 
-  "position_size_usd": 0.1,
+  "position_size_usd": 1,
   "leverage": 10,
   "mgnMode": "isolated",
 

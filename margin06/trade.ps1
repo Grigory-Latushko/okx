@@ -171,7 +171,9 @@ function Get-PositionSize {
     $resp = Send-OkxRequest -Method "POST" -RequestPath "/api/v5/account/set-leverage" -BodyJson ($bodyObj | ConvertTo-Json -Compress) -config $config
     if ($resp -and -not $resp.dryRun -and $resp.code -ne "0") { Log "set-leverage error для $instId`: $($resp.msg)" "ERROR"; return $null }
 
-    return @{ sz = $sz; info = $info; price = $price }
+    # Долларовый ATR-риск на 1 контракт = ctVal × ATR_price
+    # Возвращаем вместе с ctVal чтобы Open-PairOrders мог пересчитать sz по ATR-риску
+    return @{ sz = $sz; info = $info; price = $price; ctVal = $ctVal; step = $step; minSz = $minSz }
 }
 
 function Get-Candles($symbol, $limit, $period) {
@@ -396,7 +398,8 @@ function Run-Bot {
             $posSize   = $script:prevBtcPos.pos
             $isLong    = $posSize -gt 0
             $pnl       = if ($isLong) { ($closePx - $entryPx) * [math]::Abs($posSize) } else { ($entryPx - $closePx) * [math]::Abs($posSize) }
-            $pnlPct    = [math]::Round((($closePx - $entryPx) / $entryPx) * 100 * (if ($isLong) { 1 } else { -1 }), 2)
+            $direction = if ($isLong) { 1 } else { -1 }
+            $pnlPct = [math]::Round((($closePx - $entryPx) / $entryPx) * 100 * $direction, 2)
             $pnl       = [math]::Round($pnl, 4)
             $reason    = if ($pnlPct -gt 0) { "TP" } else { "SL" }
             Write-Host "  🔒 BTC позиция закрыта | entry=$entryPx close=$closePx PnL=$pnl ($pnlPct%)" -ForegroundColor $(if ($pnlPct -gt 0) { 'Green' } else { 'Red' })
@@ -413,7 +416,7 @@ function Run-Bot {
             $posSize   = $script:prevEthPos.pos
             $isLong    = $posSize -gt 0
             $pnl       = if ($isLong) { ($closePx - $entryPx) * [math]::Abs($posSize) } else { ($entryPx - $closePx) * [math]::Abs($posSize) }
-            $pnlPct    = [math]::Round((($closePx - $entryPx) / $entryPx) * 100 * (if ($isLong) { 1 } else { -1 }), 2)
+            $direction = if ($isLong) { 1 } else { -1 } $pnlPct = [math]::Round((($closePx - $entryPx) / $entryPx) * 100 * $direction, 2)            
             $pnl       = [math]::Round($pnl, 4)
             $reason    = if ($pnlPct -gt 0) { "TP" } else { "SL" }
             Write-Host "  🔒 ETH позиция закрыта | entry=$entryPx close=$closePx PnL=$pnl ($pnlPct%)" -ForegroundColor $(if ($pnlPct -gt 0) { 'Green' } else { 'Red' })
