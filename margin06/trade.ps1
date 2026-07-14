@@ -416,7 +416,8 @@ function Run-Bot {
             $posSize   = $script:prevEthPos.pos
             $isLong    = $posSize -gt 0
             $pnl       = if ($isLong) { ($closePx - $entryPx) * [math]::Abs($posSize) } else { ($entryPx - $closePx) * [math]::Abs($posSize) }
-            $direction = if ($isLong) { 1 } else { -1 } $pnlPct = [math]::Round((($closePx - $entryPx) / $entryPx) * 100 * $direction, 2)            
+            $direction = if ($isLong) { 1 } else { -1 }
+            $pnlPct = [math]::Round((($closePx - $entryPx) / $entryPx) * 100 * $direction, 2)
             $pnl       = [math]::Round($pnl, 4)
             $reason    = if ($pnlPct -gt 0) { "TP" } else { "SL" }
             Write-Host "  🔒 ETH позиция закрыта | entry=$entryPx close=$closePx PnL=$pnl ($pnlPct%)" -ForegroundColor $(if ($pnlPct -gt 0) { 'Green' } else { 'Red' })
