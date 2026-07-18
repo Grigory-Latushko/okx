@@ -1,0 +1,31 @@
+{
+  "api_key": "63bc7851-8cad-45ab-90e4-dec759097eb3",
+  "secret_key": "FD79DCCA6B901C84F8075875C124DA86",
+  "passphrase": "Aa11111111!",
+  "baseUrl": "https://www.okx.com",
+  "simulated": false,
+  "dryRun": false,
+
+  "btc_instrument": "SOL-USDT-SWAP",
+  "eth_instrument": "AVAX-USDT-SWAP",
+
+  "position_size_usd": 1,
+  "leverage": 10,
+  "mgnMode": "isolated",
+
+  "candle_period": "15m",
+  "candle_limit": 100,
+  "atrPeriod": 14,
+
+  "tp_atr_multiplier": 2.0,
+  "sl_atr_multiplier": 1.0,
+  "callback_atr_multiplier": 0.2,
+  "callback_sl_atr_multiplier": 0.1,
+
+  "tp_trigger_type": "last",
+  "tp_exec_market": true,
+
+  "log_file": ".\\trades.csv",
+
+  "rerun_interval_s": 5
+}
