@@ -1,0 +1,3 @@
+timestamp,event,side,eth_price,btc_return,eth_return,gap,sz,tp,sl,pnl,pnl_pct,detail
+2026-07-21 14:05:05,OPEN,LONG,1939.75,0.4666,-0.0881,0.5547,0.05,1950.51,1745.78,0,0,
+2026-07-22 20:00:17,OPEN,LONG,1924.92,-0.3597,-1.2228,0.8631,0.05,1943.2,1732.43,0,0,

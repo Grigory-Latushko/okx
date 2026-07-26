@@ -99,19 +99,24 @@ function Get-OpenPosition {
     return $null
 }
 
-# FIX: otmena zavisshikh algo-orderov -- ispravlen format massiva
-function Cancel-OrphanAlgos {
-    param([string]$instId, $config)
-    foreach ($ordType in @("conditional", "move_order_stop")) {
-        $resp = Send-OkxRequest -Method "GET" -RequestPath "/api/v5/trade/orders-algo-pending?instId=$instId&ordType=$ordType&instType=SWAP" -BodyJson "" -config $config
-        if ($resp -and $resp.data -and $resp.data.Count -gt 0) {
-            Log "Otmenyaem $($resp.data.Count) $ordType dlya $instId" "WARN"
-            $payload = @($resp.data | ForEach-Object { @{ instId = $instId; algoId = $_.algoId } })
-            $body = ConvertTo-Json $payload -Compress
-            if ($body -notmatch '^\[') { $body = "[$body]" }
-            Send-OkxRequest -Method "POST" -RequestPath "/api/v5/trade/cancel-algos" -BodyJson $body -config $config | Out-Null
-        }
-    }
+# Как в buy-the-dip-trail: instType=SWAP решает 400 ошибки
+function Get-ActiveAlgoOrders {
+    param([string]$instId, $config, [string]$ordType)
+    $resp = Send-OkxRequest -Method "GET" -RequestPath "/api/v5/trade/orders-algo-pending?instId=$instId&ordType=$ordType&instType=SWAP" -BodyJson "" -config $config
+    if (-not $resp -or -not $resp.data) { return @() }
+    return $resp.data
+}
+
+# Как в buy-the-dip-trail: @() гарантирует массив даже при одном элементе
+function Cancel-AlgoOrders {
+    param([array]$algos, [string]$instId, $config)
+    if (-not $algos -or $algos.Count -eq 0) { return }
+    $payload = @($algos | ForEach-Object { @{ instId = $instId; algoId = $_.algoId } })
+    $body = ConvertTo-Json $payload -Compress
+    if ($body -notmatch '^\[') { $body = "[$body]" }
+    $resp = Send-OkxRequest -Method "POST" -RequestPath "/api/v5/trade/cancel-algos" -BodyJson $body -config $config
+    if ($resp -and ($resp.dryRun -or $resp.code -eq "0")) { Log "Algo otmeneny dlya $instId" "OK" }
+    else { Log "Oshibka otmeny algo $instId : $($resp.msg)" "ERROR" }
 }
 
 function Write-TradeLog {
@@ -120,7 +125,7 @@ function Write-TradeLog {
     if (-not (Test-Path $logFile)) { "timestamp,event,instId,side,price,sz,dip_pct,tp,sl,pnl,pnl_pct,reason`n" | Out-File -FilePath $logFile -Encoding utf8 -NoNewline }
     $ts = (Get-Date).ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss")
     "$ts,$event,$instId,$side,$price,$sz,$dipPct,$tp,$sl,$pnl,$pnlPct,$reason`n" | Out-File -FilePath $logFile -Encoding utf8 -Append -NoNewline
-    Log "LOG: $event $instId @ $price dip=$dipPct% pnl=$pnl ($pnlPct%)" "OK"
+    Log "LOG: $event $instId @ $price" "OK"
 }
 
 function Place-TPSL {
@@ -150,33 +155,31 @@ function Open-DipOrder {
     if (-not $info) { Log "Net info dlya $instId" "ERROR"; return $false }
     $ctVal = if ($info.ctVal) { [decimal]$info.ctVal } else { 1 }
     $minSz = if ($info.minSz) { [decimal]$info.minSz } elseif ($info.lotSz) { [decimal]$info.lotSz } else { 0.01 }
-    $step  = $minSz
-    $tick  = if ($info.tickSz) { [decimal]$info.tickSz } else { $null }
     $notional = [decimal]($config.position_size_usd * $config.leverage)
-    $sz = Set-ToStep -value ([decimal]($notional / ($ctVal * $price))) -step $step
+    $sz = Set-ToStep -value ([decimal]($notional / ($ctVal * $price))) -step $minSz
     if ($sz -le 0 -or $sz -lt $minSz) { $sz = $minSz }
-    $tpPct   = [decimal]$config.tp_pct / 100
-    $slPct   = [decimal]$config.sl_pct / 100
-    $tpPrice = RoundPriceToTick -price ([decimal]($price * (1 + $tpPct))) -tick $tick
-    $slPrice = RoundPriceToTick -price ([decimal]($price * (1 - $slPct))) -tick $tick
-    Write-Host ("  {0,-24} | DROP={1}% | BUY {2} @ {3} | TP={4} SL={5}" -f $instId, $dipPct, $sz, $price, $tpPrice, $slPrice) -ForegroundColor Yellow
+
+    Write-Host ("  {0,-24} | DROP={1}% | BUY {2} @ {3}" -f $instId, $dipPct, $sz, $price) -ForegroundColor Yellow
+
     $pm = $script:posMode
     $levBody = @{ instId=$instId; lever=([string]$config.leverage); mgnMode="isolated" }
     if ($pm -and ($pm.ToString().ToLower() -match "long_short|hedge")) { $levBody.posSide = "long" }
     Send-OkxRequest -Method "POST" -RequestPath "/api/v5/account/set-leverage" -BodyJson ($levBody | ConvertTo-Json -Compress) -config $config | Out-Null
+
     $order = @{ instId=$instId; tdMode=$config.mgnMode; side="buy"; ordType="market"; sz=([string]$sz) }
     if ($pm -and ($pm.ToString().ToLower() -match "long_short|hedge")) { $order.posSide = "long" }
     $resp = Send-OkxRequest -Method "POST" -RequestPath "/api/v5/trade/order" -BodyJson ($order | ConvertTo-Json -Compress) -config $config
+
     if ($resp -and $resp.dryRun) {
         Log "DryRun: $instId LONG $sz @ $price" "WARN"
-        Write-TradeLog -event "OPEN" -instId $instId -side "LONG" -price $price -sz $sz -dipPct $dipPct -tp $tpPrice -sl $slPrice -config $config
+        Write-TradeLog -event "OPEN" -instId $instId -side "LONG" -price $price -sz $sz -dipPct $dipPct -config $config
         Place-TPSL -instId $instId -entryPx $price -sz $sz -info $info -config $config
         return $true
     } elseif (-not $resp -or ($resp.code -and $resp.code -ne "0")) {
         Log "ERR open $instId : $($resp.msg)" "ERROR"; return $false
     } else {
         Log "OK: $instId LONG opened" "OK"
-        Write-TradeLog -event "OPEN" -instId $instId -side "LONG" -price $price -sz $sz -dipPct $dipPct -tp $tpPrice -sl $slPrice -config $config
+        Write-TradeLog -event "OPEN" -instId $instId -side "LONG" -price $price -sz $sz -dipPct $dipPct -config $config
         Place-TPSL -instId $instId -entryPx $price -sz $sz -info $info -config $config
         return $true
     }
@@ -199,8 +202,39 @@ $posMode = $null
 if ($authOk) { $posMode = Get-AccountConfig -config $config }
 
 $script:prevPositions = @{}
-# FIX: kesh info chtoby ne delatj API vyzov kazhdyj cikl
-$script:infoCache = @{}
+$script:infoCache     = @{}
+$script:trendCache    = @{}  # 7d return, obnovlyaetsya raz v chas
+
+function Get-SevenDayReturn {
+    param([string]$instId, $config)
+    if ($script:trendCache.ContainsKey($instId)) {
+        $cached = $script:trendCache[$instId]
+        if ((Get-Timestamp) - $cached.Timestamp -lt 3600) { return $cached.Value }
+    }
+    try {
+        $url  = "https://www.okx.com/api/v5/market/candles?instId=$instId&bar=1D&limit=8"
+        $resp = Invoke-RestMethod -Uri $url -Method Get -ErrorAction Stop
+        if (-not $resp.data -or $resp.data.Count -lt 8) { return $null }
+        $sorted   = $resp.data | Sort-Object { [long]$_[0] }
+        $priceOld = [decimal]$sorted[0][4]
+        $priceNow = [decimal]$sorted[-1][4]
+        if ($priceOld -eq 0) { return $null }
+        $ret = [math]::Round((($priceNow - $priceOld) / $priceOld) * 100, 2)
+        $script:trendCache[$instId] = @{ Value = $ret; Timestamp = Get-Timestamp }
+        return $ret
+    } catch {
+        Log "7d return failed dlya $instId : $_" "DEBUG"
+        return $null
+    }
+}
+
+function Get-InstrumentInfoCached {
+    param([string]$instId, $config)
+    if ($script:infoCache.ContainsKey($instId)) { return $script:infoCache[$instId] }
+    $info = Get-InstrumentInfo -instId $instId -config $config
+    if ($info) { $script:infoCache[$instId] = $info }
+    return $info
+}
 
 function Run-Bot {
     Write-Host "`n========== BUY-THE-DIP ==========" -ForegroundColor Magenta
@@ -211,32 +245,69 @@ function Run-Bot {
         $openPos = Get-OpenPosition -instId $instId -config $config
         $hasPos  = $null -ne $openPos
 
-        # FIX: detekciya zakrytiya + ochistka zavisshikh orderov
+        # Дetekciya zakrytiya pozicii + ochistka zavisshikh orderov
         if ($script:prevPositions.ContainsKey($instId) -and $script:prevPositions[$instId] -and -not $hasPos) {
             $prev    = $script:prevPositions[$instId]
             $entryPx = [decimal]$prev.avgPx
             $ticker  = Get-Ticker -instId $instId -config $config
             $closePx = if ($ticker) { [decimal]$ticker.last } else { $entryPx }
-            $posAmt  = [decimal]$prev.pos
+            $posAmt  = [math]::Abs([decimal]$prev.pos)
             $pnl     = [math]::Round(($closePx - $entryPx) * $posAmt, 4)
             $pnlPct  = [math]::Round((($closePx - $entryPx) / $entryPx) * 100, 2)
             $reason  = if ($pnlPct -gt 0) { "TP" } else { "SL" }
             Write-Host ("  {0,-24} | CLOSED entry={1} close={2} P&L={3}% -> {4}" -f $instId, $entryPx, $closePx, $pnlPct, $reason) -ForegroundColor $(if ($pnlPct -gt 0) { 'Green' } else { 'Red' })
-            Write-TradeLog -event "CLOSE" -instId $instId -side "LONG" -price $closePx -sz ([math]::Abs($posAmt)) -pnl $pnl -pnlPct $pnlPct -reason $reason -config $config
-            # FIX: otmenyaem zavisshie TP/SL ordera
-            Cancel-OrphanAlgos -instId $instId -config $config
+            Write-TradeLog -event "CLOSE" -instId $instId -side "LONG" -price $closePx -sz $posAmt -pnl $pnl -pnlPct $pnlPct -reason $reason -config $config
+            # Otmenyaem VSE zavisshie ordera kak v buy-the-dip-trail
+            foreach ($ordType in @("conditional", "move_order_stop")) {
+                $orphans = Get-ActiveAlgoOrders -instId $instId -config $config -ordType $ordType
+                if ($orphans.Count -gt 0) {
+                    Log "Otmenyaem $($orphans.Count) $ordType dlya $instId" "WARN"
+                    Cancel-AlgoOrders -algos $orphans -instId $instId -config $config
+                }
+            }
         }
         $script:prevPositions[$instId] = $openPos
 
         if ($hasPos) {
+            $info      = Get-InstrumentInfoCached -instId $instId -config $config
             $entryPx   = [decimal]$openPos.avgPx
             $ticker    = Get-Ticker -instId $instId -config $config
             $currentPx = if ($ticker) { [decimal]$ticker.last } else { $entryPx }
+            $posAmt    = [math]::Abs([decimal]$openPos.pos)
             $pnlPct    = [math]::Round((($currentPx - $entryPx) / $entryPx) * 100, 2)
-            Write-Host ("  {0,-24} | LONG entry={1} now={2} P&L={3}%" -f $instId, $entryPx, $currentPx, $pnlPct) -ForegroundColor $(if ($pnlPct -ge 0) { 'Green' } else { 'Yellow' })
+
+            # Kak v buy-the-dip-trail: count-based detekciya TP/SL
+            $condOrders = Get-ActiveAlgoOrders -instId $instId -config $config -ordType "conditional"
+            $condCount  = $condOrders.Count
+            $hasTP      = $condCount -ge 1
+            $hasSL      = $condCount -ge 2
+
+            $ordStatus = if ($hasTP -and $hasSL) { "[TP/SL]" } elseif ($hasTP) { "[TP only]" } else { "[NO ORDERS]" }
+            Write-Host ("  {0,-24} | LONG entry={1} now={2} P&L={3}% {4}" -f $instId, $entryPx, $currentPx, $pnlPct, $ordStatus) -ForegroundColor $(if ($pnlPct -ge 0) { 'Green' } else { 'Yellow' })
+
+            # Kak v buy-the-dip-trail STATE 3: vosstanavlivaem otsutstvuyushchie TP/SL
+            if (-not $hasTP -and -not $hasSL) {
+                Log "Net TP i SL dlya $instId -- stavim oba" "WARN"
+                Place-TPSL -instId $instId -entryPx $entryPx -sz $posAmt -info $info -config $config
+            } elseif (-not $hasTP) {
+                Log "Net TP dlya $instId -- stavim" "WARN"
+                $tick    = if ($info -and $info.tickSz) { [decimal]$info.tickSz } else { $null }
+                $tpPrice = RoundPriceToTick -price ([decimal]($entryPx * (1 + [decimal]$config.tp_pct / 100))) -tick $tick
+                $tpType  = if ($config.tp_trigger_type) { $config.tp_trigger_type } else { "last" }
+                $r = Send-OkxRequest -Method "POST" -RequestPath "/api/v5/trade/order-algo" -BodyJson (@{ instId=$instId; tdMode=$config.mgnMode; side="sell"; ordType="conditional"; sz=([string]$posAmt); tpTriggerPx=[string]$tpPrice; tpTriggerPxType=$tpType; tpOrdPx="-1" } | ConvertTo-Json -Compress) -config $config
+                if ($r -and $r.code -eq "0") { Log "OK: TP @ $tpPrice" "OK" } else { Log "ERR TP: $($r.msg)" "ERROR" }
+            } elseif (-not $hasSL) {
+                Log "Net SL dlya $instId -- stavim" "WARN"
+                $tick    = if ($info -and $info.tickSz) { [decimal]$info.tickSz } else { $null }
+                $slPrice = RoundPriceToTick -price ([decimal]($entryPx * (1 - [decimal]$config.sl_pct / 100))) -tick $tick
+                $tpType  = if ($config.tp_trigger_type) { $config.tp_trigger_type } else { "last" }
+                $r = Send-OkxRequest -Method "POST" -RequestPath "/api/v5/trade/order-algo" -BodyJson (@{ instId=$instId; tdMode=$config.mgnMode; side="sell"; ordType="conditional"; sz=([string]$posAmt); slTriggerPx=[string]$slPrice; slTriggerPxType=$tpType; slOrdPx="-1" } | ConvertTo-Json -Compress) -config $config
+                if ($r -and $r.code -eq "0") { Log "OK: SL @ $slPrice" "OK" } else { Log "ERR SL: $($r.msg)" "ERROR" }
+            }
             continue
         }
 
+        # Net pozicii -- monitorivaem prosadku
         $ticker = Get-Ticker -instId $instId -config $config
         if (-not $ticker) { continue }
         $price     = [decimal]$ticker.last
@@ -248,7 +319,19 @@ function Run-Bot {
         Write-Host ("{0,-24} | 24h: {1,7:F2}%  | Cena: {2}" -f "  $instId", $dropPct, $price) -ForegroundColor $color
 
         if ($dropPct -le $threshold) {
-            Write-Host "  >> $instId : $dropPct% -- BUY!" -ForegroundColor Red
+            # Filtr 7-dnevnogo trenda
+            if ($null -ne $config.trend_filter_7d_pct) {
+                $ret7d = Get-SevenDayReturn -instId $instId -config $config
+                $filterThreshold = [decimal]$config.trend_filter_7d_pct
+                if ($null -ne $ret7d -and $ret7d -le $filterThreshold) {
+                    Write-Host ("{0,-24} | SKIP: 7d={1}% < {2}% (dauntren d)" -f "  $instId", $ret7d, $filterThreshold) -ForegroundColor DarkGray
+                    continue
+                }
+                $ret7dStr = if ($null -ne $ret7d) { "7d=$ret7d%" } else { "7d=n/a" }
+                Write-Host "  >> $instId : $dropPct% -- BUY! ($ret7dStr)" -ForegroundColor Red
+            } else {
+                Write-Host "  >> $instId : $dropPct% -- BUY!" -ForegroundColor Red
+            }
             Open-DipOrder -instId $instId -price $price -dipPct $dropPct -config $config
         }
     }

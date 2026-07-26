@@ -236,8 +236,32 @@ if ($authOk) { $posMode = Get-AccountConfig -config $config }
 
 $script:infoCache     = @{}
 $script:prevPositions = @{}
-$script:slCooldown    = @{}
-$script:slStreak      = @{}
+$script:trendCache    = @{}  # 7d return, obnovlyaetsya raz v chas
+
+function Get-SevenDayReturn {
+    param([string]$instId, $config)
+    # Vozvrashchaem iz kesha esli ne proshlо chasa
+    if ($script:trendCache.ContainsKey($instId)) {
+        $cached = $script:trendCache[$instId]
+        if ((Get-Timestamp) - $cached.Timestamp -lt 3600) { return $cached.Value }
+    }
+    try {
+        $url  = "https://www.okx.com/api/v5/market/candles?instId=$instId&bar=1D&limit=8"
+        $resp = Invoke-RestMethod -Uri $url -Method Get -ErrorAction Stop
+        if (-not $resp.data -or $resp.data.Count -lt 8) { return $null }
+        # Sortiruem po vremeni: pervyj = 7 dnej nazad, poslednij = tekushchaya svecha
+        $sorted = $resp.data | Sort-Object { [long]$_[0] }
+        $priceOld = [decimal]$sorted[0][4]   # Close 7d ago
+        $priceNow = [decimal]$sorted[-1][4]  # Close segodnya
+        if ($priceOld -eq 0) { return $null }
+        $ret = [math]::Round((($priceNow - $priceOld) / $priceOld) * 100, 2)
+        $script:trendCache[$instId] = @{ Value = $ret; Timestamp = Get-Timestamp }
+        return $ret
+    } catch {
+        Log "7d return failed dlya $instId : $_" "DEBUG"
+        return $null
+    }
+}
 
 function Get-InstrumentInfoCached {
     param([string]$instId, $config)
@@ -285,27 +309,6 @@ function Run-Bot {
             Write-Host ("  {0,-24} | CLOSED entry={1} close={2} P&L={3} ({4}%) -> {5}" -f $instId, $entryPx, $closePx, $pnl, $pnlPct, $reason) -ForegroundColor $(if ($pnlPct -gt 0) { 'Green' } else { 'Red' })
             Write-TradeLog -event "CLOSED" -instId $instId -side "LONG" -price $closePx -sz $posAmt -pnl $pnl -pnlPct $pnlPct -detail $reason -config $config
 
-            # FIX: cooldown i streak counter
-            $cooldownMin = if ($config.sl_cooldown_minutes) { [int]$config.sl_cooldown_minutes } else { 60 }
-            $maxStreak   = if ($config.max_sl_streak)       { [int]$config.max_sl_streak }       else { 3 }
-            $streakPause = if ($config.streak_pause_hours)  { [int]$config.streak_pause_hours }  else { 6 }
-
-            if ($reason -eq "SL") {
-                if (-not $script:slStreak.ContainsKey($instId)) { $script:slStreak[$instId] = 0 }
-                $script:slStreak[$instId]++
-                $streak = $script:slStreak[$instId]
-                if ($streak -ge $maxStreak) {
-                    $script:slCooldown[$instId] = (Get-Date).AddHours($streakPause)
-                    $script:slStreak[$instId]   = 0
-                    Write-Host ("  {0,-24} | PAUSE: {1} SL podryad -- pauza {2} ch." -f $instId, $streak, $streakPause) -ForegroundColor Red
-                } else {
-                    $script:slCooldown[$instId] = (Get-Date).AddMinutes($cooldownMin)
-                    Write-Host ("  {0,-24} | COOLDOWN: SL #{1}/{2} -- {3} min." -f $instId, $streak, $maxStreak, $cooldownMin) -ForegroundColor Yellow
-                }
-            } else {
-                $script:slStreak[$instId] = 0
-            }
-
             # Otmenyaem zavisshie ordera
             $orphanCond = Get-ActiveAlgoOrders -instId $instId -config $config -ordType "conditional"
             if ($orphanCond.Count -gt 0) {
@@ -323,13 +326,6 @@ function Run-Bot {
         # ===== STATE 1: net pozicii, net trailing BUY =====
         if (-not $openPos -and -not $hasTrailBuy) {
 
-            # FIX: proverka cooldown pered vkhodom
-            if ($script:slCooldown.ContainsKey($instId) -and (Get-Date) -lt $script:slCooldown[$instId]) {
-                $remaining = [math]::Round(($script:slCooldown[$instId] - (Get-Date)).TotalMinutes, 0)
-                Write-Host ("{0,-24} | COOLDOWN: eshe {1} min." -f "  $instId", $remaining) -ForegroundColor DarkGray
-                continue
-            }
-
             $ticker = Get-Ticker -instId $instId -config $config
             if (-not $ticker) { continue }
             $price     = [decimal]$ticker.last
@@ -341,7 +337,19 @@ function Run-Bot {
             Write-Host ("{0,-24} | 24h: {1,7:F2}%  | Cena: {2}" -f "  $instId", $dropPct, $price) -ForegroundColor $color
 
             if ($dropPct -le $threshold) {
-                Write-Host "  >> $instId : prosadka $dropPct% -- trailing BUY!" -ForegroundColor Red
+                # Filtr 7-dnevnogo trenda
+                if ($null -ne $config.trend_filter_7d_pct) {
+                    $ret7d = Get-SevenDayReturn -instId $instId -config $config
+                    $filterThreshold = [decimal]$config.trend_filter_7d_pct
+                    if ($null -ne $ret7d -and $ret7d -le $filterThreshold) {
+                        Write-Host ("{0,-24} | SKIP: 7d={1}% < {2}% (dauнtрend)" -f "  $instId", $ret7d, $filterThreshold) -ForegroundColor DarkGray
+                        continue
+                    }
+                    $ret7dStr = if ($null -ne $ret7d) { "7d=$ret7d%" } else { "7d=n/a" }
+                    Write-Host "  >> $instId : prosadka $dropPct% -- trailing BUY! ($ret7dStr)" -ForegroundColor Red
+                } else {
+                    Write-Host "  >> $instId : prosadka $dropPct% -- trailing BUY!" -ForegroundColor Red
+                }
                 Place-TrailingBuy -instId $instId -price $price -dropPct $dropPct -info $info -config $config
             }
             continue
@@ -415,6 +423,11 @@ function Run-Bot {
         $tpLevel = $entryPx * (1 + $tpPct / 100)
         if ($profitPct -ge $profitThreshold -and $currentPx -lt $tpLevel -and -not $hasTrailSell) {
             Write-Host "  >> $instId : pribyl $profitPct% > $profitThreshold% -- LOCK PROFIT trailing SELL!" -ForegroundColor Green
+            # Otmenyaem TP i SL pered postavkoj trailing -- inache sozdayutsya dubli
+            if ($condOrders.Count -gt 0) {
+                Log "Otmenyaem $($condOrders.Count) TP/SL pered trailing SELL dlya $instId" "WARN"
+                Cancel-AlgoOrders -algos $condOrders -instId $instId -config $config
+            }
             Place-TrailingSell -instId $instId -currentPx $currentPx -sz $szForOrders -reason "LOCK_PROFIT" -callbackPct $config.exit_trail_callback_pct -config $config
         }
     }

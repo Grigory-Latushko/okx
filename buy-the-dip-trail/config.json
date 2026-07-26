@@ -30,7 +30,6 @@
     "GALA-USDT-SWAP",
     "GMX-USDT-SWAP",
     "HBAR-USDT-SWAP",
-    "HYPE-USDT-SWAP",
     "ICP-USDT-SWAP",
     "IMX-USDT-SWAP",
     "INJ-USDT-SWAP",
@@ -54,7 +53,6 @@
     "STX-USDT-SWAP",
     "SUI-USDT-SWAP",
     "TAO-USDT-SWAP",
-    "TIA-USDT-SWAP",
     "TRX-USDT-SWAP",
     "UNI-USDT-SWAP",
     "WIF-USDT-SWAP",
@@ -65,18 +63,20 @@
     "ZRO-USDT-SWAP"
   ],
 
-  "dip_threshold_pct": -5.0,
+  "dip_threshold_pct": -7.0,
 
-  "entry_trail_callback_pct": 0.5,
+  "trend_filter_7d_pct": -15.0,
+
+  "entry_trail_callback_pct": 1,
 
   "position_size_usd": 1,
   "leverage": 10,
   "mgnMode": "isolated",
 
-  "tp_pct": 2.0,
+  "tp_pct": 4.0,
   "sl_pct": 9.5,
 
-  "profit_trail_threshold_pct": 1.9,
+  "profit_trail_threshold_pct": 2.0,
   "exit_trail_callback_pct": 0.1,
 
   "loss_trail_callback_pct": 0.5,

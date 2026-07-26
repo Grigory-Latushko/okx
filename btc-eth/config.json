@@ -1,0 +1,35 @@
+{
+  "api_key": "57494314-508d-4a72-ae93-eaf593e8784c",
+  "secret_key": "EA0E49985229305DE67178A21E0EAFCA",
+  "passphrase": "1027933Aa!",
+  "baseUrl": "https://www.okx.com",
+  "simulated": false,
+  "dryRun": false,
+
+  "btc_instrument": "BTC-USDT-SWAP",
+  "eth_instrument": "ETH-USDT-SWAP",
+
+  "candle_period": "15m",
+  "lookback_candles": 12,
+
+  "min_gap_pct": 0.8,
+  "max_gap_pct": 8.0,
+  "min_btc_move_pct": 0.2,
+
+  "tp_gap_multiplier": 1.1,
+  "min_tp_pct": 0.5,
+  "max_tp_pct": 6.0,
+  "sl_pct": 10.0,
+
+  "allow_shorts": false,
+
+  "position_size_usd": 1,
+  "leverage": 10,
+  "mgnMode": "isolated",
+
+  "tp_trigger_type": "last",
+
+  "log_file": ".\\trades.csv",
+
+  "rerun_interval_s": 1
+}
