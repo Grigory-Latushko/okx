@@ -66,7 +66,7 @@
   "dip_threshold_pct": -7.0,
 
   "position_size_usd": 1,
-  "leverage": 10,
+  "leverage": 8,
   "mgnMode": "isolated",
 
   "tp_pct": 2.0,
