@@ -225,12 +225,20 @@ function Place-TrailingTP {
     if ($config.tp_activate_pct -and [decimal]$config.tp_activate_pct -gt 0 -and $entryPx -gt 0) {
         $tick     = if ($info.tickSz) { [decimal]$info.tickSz } else { $null }
         $activePx = RoundPriceToTick -price ([decimal]($entryPx * (1 + [decimal]$config.tp_activate_pct / 100))) -tick $tick
-        $body.activePx = [string]$activePx
-        $activeInfo = " | activate>=$activePx (+$($config.tp_activate_pct)% ot entry=$entryPx)"
+        # FIX: stavim activePx tolko esli tekushchaya cena NIZHE aktivacii.
+        # Esli cena uzhe VYSHE -- activePx ne nuzhna: trailing startuet srazu.
+        # Esli aktivaciyu postavit vyshe tekushchej ceny -- OKX budet zhdat
+        # peresecheniya snizu vverkh i TP 'zависнет'.
+        if ($activePx -gt $currentPx) {
+            $body.activePx = [string]$activePx
+            $activeInfo = " | activate>=$activePx (zhdjom rosta)"
+        } else {
+            $activeInfo = " | bez activePx (cena uzhe vyshe $activePx -- startuet srazu)"
+        }
     }
-    Write-Host "  >> Trailing TP $instId | gap=$($config.trailing_tp_callback_pct)% | sz(ves obyem)=$sz$activeInfo" -ForegroundColor Yellow
+    Write-Host "  >> Trailing TP $instId | gap=$($config.trailing_tp_callback_pct)% | sz=$sz$activeInfo" -ForegroundColor Yellow
     $resp = Send-OkxRequest -Method "POST" -RequestPath "/api/v5/trade/order-algo" -BodyJson ($body | ConvertTo-Json -Compress) -config $config
-    if ($resp -and $resp.dryRun)         { Log "DryRun: trailing TP $instId" "WARN"; $script:lastTpChangeAt[$instId] = Get-Timestamp }
+    if ($resp -and $resp.dryRun)           { Log "DryRun: trailing TP $instId" "WARN"; $script:lastTpChangeAt[$instId] = Get-Timestamp }
     elseif ($resp -and $resp.code -eq "0") { Log "OK: Trailing TP $instId sz=$sz$activeInfo" "OK"; $script:lastTpChangeAt[$instId] = Get-Timestamp; Write-TradeLog -event "TRAIL_TP_PLACED" -instId $instId -side "SELL" -price $currentPx -sz $sz -detail "gap=$($config.trailing_tp_callback_pct)%$activeInfo" -config $config }
     else { Log "ERR trailing TP $instId : $($resp.msg)" "ERROR" }
 }

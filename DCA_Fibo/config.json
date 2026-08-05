@@ -1,0 +1,29 @@
+{
+  "account": "M04",
+  "api_key": "63bc7851-8cad-45ab-90e4-dec759097eb3",
+  "secret_key": "FD79DCCA6B901C84F8075875C124DA86",
+  "passphrase": "Aa11111111!",
+  "baseUrl": "https://www.okx.com",
+  "simulated": false,
+  "dryRun": false,
+
+  "instruments": [
+    "SHIB-USDT-SWAP"
+  ],
+
+  "hourly_dip_threshold_pct": -1.0,
+
+  "entry_trail_callback_pct": 0.3,
+
+  "buy_size_usd": 0.1,
+  "max_fibo_buys": 10,
+  "leverage": 10,
+  "mgnMode": "isolated",
+
+  "trailing_tp_callback_pct": 0.5,
+  "tp_activate_pct": 3.0,
+
+  "log_file": ".\\trades.csv",
+
+  "rerun_interval_s": 1
+}

@@ -174,7 +174,7 @@ function Get-DcaPositionSz {
     return $sz
 }
 
-# ---------------- open chasovoj svechi (kesh na chas) ----------------
+# ---------------- open текущей часовой свечи ----------------
 $script:hourOpenCache = @{}
 function Get-HourOpenPrice {
     param([string]$instId, $config)
@@ -183,24 +183,20 @@ function Get-HourOpenPrice {
         return $script:hourOpenCache[$instId].Value
     }
     try {
-        $url  = "$($config.baseUrl.TrimEnd('/'))/api/v5/market/candles?instId=$instId&bar=1H&limit=1"
+        $url  = "$($config.baseUrl.TrimEnd('/'))/api/v5/market/candles?instId=$instId&bar=1H&limit=2"
         $resp = Invoke-RestMethod -Uri $url -Method Get -ErrorAction Stop
         if (-not $resp.data -or $resp.data.Count -lt 1) { return $null }
-        $candleTsSec = [long]($resp.data[0][0]) / 1000
+        $candleTsSec  = [long]($resp.data[0][0]) / 1000
         $candleBucket = [math]::Floor($candleTsSec / 3600)
         if ($candleBucket -ne $bucket) {
-            # OKX eshhjo ne sozdal svechu novogo chasa (granica chasa) -- ne kešируем stalyj open,
-            # probuem zanovo na sleduyushchem cikle
-            Log "$instId : svecha API eshhjo staraya (bucket $candleBucket != $bucket) -- propuskaem kesh" "DEBUG"
-            return $null
+            $openPx = [decimal]$resp.data[0][4]  # close predydushchej = open novogo chasa
+        } else {
+            $openPx = [decimal]$resp.data[0][1]  # open tekushchej svechi
         }
-        $openPx = [decimal]$resp.data[0][1]
         $script:hourOpenCache[$instId] = @{ Value = $openPx; Bucket = $bucket }
+        Log "$instId : hour open = $openPx" "DEBUG"
         return $openPx
-    } catch {
-        Log "Hour-open fetch failed dlya $instId : $_" "DEBUG"
-        return $null
-    }
+    } catch { Log "Hour-open failed dlya $instId : $_" "DEBUG"; return $null }
 }
 
 # ======================== DEJSTVIYA ========================
@@ -225,8 +221,12 @@ function Place-TrailingTP {
     if ($config.tp_activate_pct -and [decimal]$config.tp_activate_pct -gt 0 -and $entryPx -gt 0) {
         $tick     = if ($info.tickSz) { [decimal]$info.tickSz } else { $null }
         $activePx = RoundPriceToTick -price ([decimal]($entryPx * (1 + [decimal]$config.tp_activate_pct / 100))) -tick $tick
-        $body.activePx = [string]$activePx
-        $activeInfo = " | activate>=$activePx (+$($config.tp_activate_pct)% ot entry=$entryPx)"
+        if ($activePx -gt $currentPx) {
+            $body.activePx = [string]$activePx
+            $activeInfo = " | activate>=$activePx (zhdjom rosta)"
+        } else {
+            $activeInfo = " | bez activePx (cena uzhe vyshe -- startuet srazu)"
+        }
     }
     Write-Host "  >> Trailing TP $instId | gap=$($config.trailing_tp_callback_pct)% | sz(ves obyem)=$sz$activeInfo" -ForegroundColor Yellow
     $resp = Send-OkxRequest -Method "POST" -RequestPath "/api/v5/trade/order-algo" -BodyJson ($body | ConvertTo-Json -Compress) -config $config
