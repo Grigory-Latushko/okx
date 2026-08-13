@@ -1,4 +1,5 @@
 {
+  "account": "M03",
   "api_key": "57494314-508d-4a72-ae93-eaf593e8784c",
   "secret_key": "EA0E49985229305DE67178A21E0EAFCA",
   "passphrase": "1027933Aa!",
@@ -7,10 +8,11 @@
   "dryRun": false,
 
   "instruments": [
-    "BTC-USDT-SWAP"
+    "ETH-USDT-SWAP"
   ],
 
   "hourly_dip_threshold_pct": -1.0,
+  "averaging_step_pct": 1.0,
 
   "entry_trail_callback_pct": 0.3,
   "buy_size_usd": 0.5,
@@ -18,7 +20,7 @@
   "mgnMode": "isolated",
 
   "trailing_tp_callback_pct": 0.5,
-  "tp_activate_pct": 3.0,
+  "tp_activate_pct": 2.0,
 
   "log_file": ".\\trades.csv",
 
