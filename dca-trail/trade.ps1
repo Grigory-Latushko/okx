@@ -232,11 +232,12 @@ if ($null -eq $balResp) { $authOk = $false; Log "Auth failed" "WARN" } else { Lo
 $script:posMode = $null
 if ($authOk) { $script:posMode = Get-AccountConfig -config $config }
 
-$script:infoCache  = @{}
-$script:prevPos    = @{}
-$script:lastBuyBucket = @{}
-$script:lastTpAt   = @{}
-$script:tpCooldown = 6
+$script:infoCache       = @{}
+$script:prevPos         = @{}
+$script:lastBuyBucket   = @{}
+$script:lastTpAt        = @{}
+$script:lastClosedAt    = @{}  # FIX: cooldown posle zakrytiya pozicii
+$script:tpCooldown      = 6
 
 function Get-InstrumentInfoCached {
     param([string]$instId, $config)
@@ -277,6 +278,9 @@ function Run-Bot {
             $pnl     = [math]::Round(($price - $entryPx) * $posAmt * $ctVal, 4)
             Write-Host ("  {0,-24} | CLOSED entry={1} close={2} P&L={3} ({4}%)" -f $instId, $entryPx, $price, $pnl, $pnlPct) -ForegroundColor $(if ($pnlPct -gt 0) { 'Green' } else { 'Red' })
             Write-TradeLog -event "CLOSED" -instId $instId -side "LONG" -price $price -sz $posAmt -pnl $pnl -pnlPct $pnlPct -detail "TRAIL_TP" -config $config
+            # FIX: zapominaem vremya zakrytiya -- ne pokupaem srazu posle zakrytiya
+            $closeCooldown = if ($config.close_cooldown_sec) { [int]$config.close_cooldown_sec } else { 30 }
+            $script:lastClosedAt[$instId] = Get-Timestamp
         }
         $script:prevPos[$instId] = $openPos
 
@@ -296,9 +300,14 @@ function Run-Bot {
                 Log "$instId : net TP -- stavim" "WARN"
                 Place-TrailingTP -instId $instId -currentPx $price -sz $posAmt -entryPx $entryPx -info $info -config $config
             } else {
-                $existSz = [decimal]$trailSells[0].sz
-                if ($existSz -ne $posAmt) {
-                    Log "$instId : objem izm. $existSz->$posAmt -- perestavlyaem TP" "WARN"
+                $existSz  = [decimal]$trailSells[0].sz
+                # FIX: sravnivaem s dopuskom 1% -- ne tochno
+                # Tochnoe sravnenie (-ne) daet lozhnye srabatyvaniya iz-za raznoj
+                # tochnosti chisel v API OKX (9.83 vs 9.830000001)
+                # i vyzyvaet postoyannyj cancel+replace kazhdye N sekund
+                $sizeDiffPct = if ($posAmt -gt 0) { [math]::Abs($existSz - $posAmt) / $posAmt * 100 } else { 0 }
+                if ($sizeDiffPct -gt 1.0) {
+                    Log "$instId : objem izm. $existSz->$posAmt ($([math]::Round($sizeDiffPct,2))%) -- perestavlyaem TP" "WARN"
                     Cancel-AlgoOrders -algos $trailSells -instId $instId -config $config
                     Place-TrailingTP -instId $instId -currentPx $price -sz $posAmt -entryPx $entryPx -info $info -config $config
                 }
@@ -320,9 +329,12 @@ function Run-Bot {
             Write-Host ("{0,-24} | 1h: {1,7:F2}% | Cena: {2} | pos={3}{4}" -f "  $instId", $dropPct, $price, $posAmt, $tag) -ForegroundColor $color
 
             if ($dropPct -le $threshold) {
-                if      ($hasTrailBuy)   { Write-Host "  .. trail BUY uzhe aktiven" -ForegroundColor DarkGray }
-                elseif  ($boughtThisHour){ Write-Host "  .. uzhe kupleno v etom chasu" -ForegroundColor DarkGray }
-                elseif  ($tooClose)      { Write-Host "  .. cena $price > min buy $minBuyPx (nuzhno -$stepPct% ot entry $entryPx) -- propuskaem" -ForegroundColor DarkGray }
+                $closeCooldown = if ($config.close_cooldown_sec) { [int]$config.close_cooldown_sec } else { 30 }
+                $inCloseCooldown = $script:lastClosedAt.ContainsKey($instId) -and ((Get-Timestamp) - $script:lastClosedAt[$instId] -lt $closeCooldown)
+                if      ($hasTrailBuy)    { Write-Host "  .. trail BUY uzhe aktiven" -ForegroundColor DarkGray }
+                elseif  ($boughtThisHour) { Write-Host "  .. uzhe kupleno v etom chasu" -ForegroundColor DarkGray }
+                elseif  ($inCloseCooldown){ Write-Host "  .. cooldown posle zakrytiya ($([math]::Round($closeCooldown - ((Get-Timestamp) - $script:lastClosedAt[$instId])))s ostalos')" -ForegroundColor DarkGray }
+                elseif  ($tooClose)       { Write-Host "  .. cena $price > min buy $minBuyPx (nuzhno -$stepPct% ot entry $entryPx) -- propuskaem" -ForegroundColor DarkGray }
                 else {
                     Write-Host "  >> $instId : dip $dropPct% -- trailing BUY!" -ForegroundColor Red
                     Place-TrailingBuy -instId $instId -price $price -dropPct $dropPct -info $info -config $config

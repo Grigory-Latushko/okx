@@ -8,13 +8,14 @@
   "dryRun": false,
 
   "instruments": [
-    "BNB-USDT-SWAP"
+    "ETH-USDT-SWAP",
+    "DOGE-USDT-SWAP"
   ],
 
-  "hourly_dip_threshold_pct": -0.7,
+  "hourly_dip_threshold_pct": -1.0,
   "averaging_step_pct": 1.0,
 
-  "entry_trail_callback_pct": 0.2,
+  "entry_trail_callback_pct": 0.3,
   "buy_size_usd": 0.5,
   "leverage": 10,
   "mgnMode": "isolated",
@@ -24,5 +25,5 @@
 
   "log_file": ".\\trades.csv",
 
-  "rerun_interval_s": 1
+  "rerun_interval_s": 2
 }

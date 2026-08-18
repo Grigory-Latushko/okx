@@ -8,11 +8,13 @@
   "dryRun": false,
 
   "instruments": [
-    "ETH-USDT-SWAP"
+    "OKB-USDT-SWAP",
+    "NEAR-USDT-SWAP"
   ],
 
   "hourly_dip_threshold_pct": -1.0,
   "averaging_step_pct": 1.0,
+  "close_cooldown_sec": 30,
 
   "entry_trail_callback_pct": 0.3,
   "buy_size_usd": 0.5,
@@ -24,5 +26,5 @@
 
   "log_file": ".\\trades.csv",
 
-  "rerun_interval_s": 1
+  "rerun_interval_s": 2
 }
