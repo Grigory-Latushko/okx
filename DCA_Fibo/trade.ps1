@@ -231,10 +231,12 @@ function Place-FiboTrailingBuy {
     if ($resp -and $resp.dryRun) {
         Log "DryRun: Fibo trailing BUY #$buyNum $instId" "WARN"
         $script:buyCount[$instId]++
+        $script:lastBuyBucket[$instId] = [math]::Floor((Get-Timestamp) / 3600)
         Write-TradeLog -event "FIBO_BUY_PLACED" -instId $instId -side "BUY" -price $price -sz $sz -dipPct $dropPct -detail "buy=$buyNum fib=$fibMult x$([decimal]$config.buy_size_usd*$fibMult)usd" -config $config
     } elseif ($resp -and $resp.code -eq "0") {
         Log "OK: Fibo trailing BUY #$buyNum $instId Fib=$fibMult sz=$sz" "OK"
         $script:buyCount[$instId]++
+        $script:lastBuyBucket[$instId] = [math]::Floor((Get-Timestamp) / 3600)
         Write-TradeLog -event "FIBO_BUY_PLACED" -instId $instId -side "BUY" -price $price -sz $sz -dipPct $dropPct -detail "buy=$buyNum fib=$fibMult x$([decimal]$config.buy_size_usd*$fibMult)usd" -config $config
     } else {
         Log "ERR Fibo trailing BUY #$buyNum $instId : $($resp.msg)" "ERROR"
@@ -288,9 +290,11 @@ if ($authOk) { $script:posMode = Get-AccountConfig -config $config }
 
 $script:infoCache      = @{}
 $script:prevPositions  = @{}
-$script:buyCount       = @{}   # instId → сколько Фибо-покупок сделано (сбрасывается при закрытии позиции)
-$script:lastTpAt       = @{}   # instId → unix ts последней постановки TP
-$script:tpCooldown     = 6     # сек, ждём синхронизации API после изменения TP
+$script:buyCount       = @{}   # instId -> skolko Fibo-pokupok sdelano
+$script:lastTpAt       = @{}   # instId -> unix ts poslednej postanovki TP
+$script:lastClosedAt   = @{}   # FIX: cooldown posle zakrytiya pozicii
+$script:lastBuyBucket  = @{}   # FIX: ogranichenie 1 pokupki v chas
+$script:tpCooldown     = 6     # sek, zhdjom sinhronizacii API posle izmeneniya TP
 
 # Инициализируем счётчик покупок для всех инструментов
 foreach ($inst in $config.instruments) { $script:buyCount[$inst] = 0 }
@@ -348,6 +352,8 @@ function Run-Bot {
             # Сбрасываем счётчик Фибоначчи при закрытии позиции
             $script:buyCount[$instId] = 0
             Log "$instId : buyCount сброшен до 0" "DEBUG"
+            # FIX: cooldown posle zakrytiya
+            $script:lastClosedAt[$instId] = Get-Timestamp
 
             # Отменяем зависшие ордера
             foreach ($ordType in @("conditional","move_order_stop")) {
@@ -379,8 +385,10 @@ function Run-Bot {
                 Place-TrailingTP -instId $instId -currentPx $price -sz $posAmt -entryPx $entryPx -info $info -config $config
             } else {
                 $existSz = [decimal]$trailSells[0].sz
-                if ($existSz -ne $posAmt) {
-                    Log "$instId : objem izmenilsya ($existSz -> $posAmt) -- perestavlyaem TP" "WARN"
+                # FIX: dopusk 1% -- ne perestavlyaem TP pri melkikh razlichiyakh tochnosti API
+                $sizeDiffPct = if ($posAmt -gt 0) { [math]::Abs($existSz - $posAmt) / $posAmt * 100 } else { 0 }
+                if ($sizeDiffPct -gt 1.0) {
+                    Log "$instId : objem izmenilsya ($existSz -> $posAmt, $([math]::Round($sizeDiffPct,2))%) -- perestavlyaem TP" "WARN"
                     Cancel-AlgoOrders -algos $trailSells -instId $instId -config $config
                     Place-TrailingTP -instId $instId -currentPx $price -sz $posAmt -entryPx $entryPx -info $info -config $config
                 }
@@ -394,24 +402,38 @@ function Run-Bot {
             $threshold = [decimal]$config.hourly_dip_threshold_pct
             $color     = if ($dropPct -le $threshold) { 'Red' } elseif ($dropPct -le 0) { 'Yellow' } else { 'Green' }
 
+            $stepPct         = if ($config.averaging_step_pct) { [decimal]$config.averaging_step_pct } else { 1.0 }
+            $minBuyPx        = if ($posAmt -gt 0) { [math]::Round($entryPx * (1 - $stepPct / 100), 8) } else { 0 }
+            $tooClose        = ($posAmt -gt 0) -and ($price -gt $minBuyPx)
+            $closeCooldown   = if ($config.close_cooldown_sec) { [int]$config.close_cooldown_sec } else { 30 }
+            $inCloseCooldown = $script:lastClosedAt.ContainsKey($instId) -and ((Get-Timestamp) - $script:lastClosedAt[$instId] -lt $closeCooldown)
+            $bucket          = [math]::Floor((Get-Timestamp) / 3600)
+            $boughtThisHour  = $script:lastBuyBucket.ContainsKey($instId) -and $script:lastBuyBucket[$instId] -eq $bucket
+
             $nextBuy    = $curBuyCount + 1
             $nextFib    = if ($nextBuy -le $maxBuys) { Get-FibNumber -n $nextBuy } else { 0 }
             $nextUsd    = if ($nextFib -gt 0) { [decimal]$config.buy_size_usd * $nextFib } else { 0 }
-            $buyTag     = if ($curBuyCount -ge $maxBuys) { " [MAX $maxBuys dostignut]" }
-                          elseif ($hasTrailBuy)           { " [trail BUY aktiven]" }
-                          else                            { " [next: #$nextBuy Fib=$nextFib x${nextUsd}usd]" }
+            $buyTag     = if ($curBuyCount -ge $maxBuys)  { " [MAX $maxBuys dostignut]" }
+                          elseif ($hasTrailBuy)            { " [trail BUY aktiven]" }
+                          elseif ($boughtThisHour)         { " [uzhe kupleno v etom chasu]" }
+                          elseif ($inCloseCooldown)        { " [cooldown posle zakrytiya]" }
+                          elseif ($tooClose)               { " [zhdjom -$stepPct% ot entry=$entryPx -> need<=$minBuyPx]" }
+                          else                             { " [next: #$nextBuy Fib=$nextFib x${nextUsd}usd]" }
 
             Write-Host ("{0,-24} | 1h: {1,7:F2}% | Cena: {2} | pos={3} | buys={4}/{5}{6}" -f "  $instId", $dropPct, $price, $posAmt, $curBuyCount, $maxBuys, $buyTag) -ForegroundColor $color
-
-            $aboveAvg = ($posAmt -gt 0) -and ($price -ge $entryPx)
 
             if ($dropPct -le $threshold) {
                 if ($hasTrailBuy) {
                     Write-Host "  .. $instId : prosadka est, trailing BUY uzhe aktiven (limit 1)" -ForegroundColor DarkGray
                 } elseif ($curBuyCount -ge $maxBuys) {
                     Write-Host "  .. $instId : dostignut predel $maxBuys pokupok -- ne dokupaemsya" -ForegroundColor DarkGray
-                } elseif ($aboveAvg) {
-                    Write-Host "  .. $instId : cena $price >= srednej $entryPx -- ne usrednyaemsya vverkh" -ForegroundColor DarkGray
+                } elseif ($boughtThisHour) {
+                    Write-Host "  .. $instId : uzhe kupleno v etom chasu -- zhdjom sleduyushchego" -ForegroundColor DarkGray
+                } elseif ($inCloseCooldown) {
+                    $rem = $closeCooldown - ((Get-Timestamp) - $script:lastClosedAt[$instId])
+                    Write-Host "  .. $instId : cooldown posle zakrytiya ($([math]::Round($rem))s ostalos')" -ForegroundColor DarkGray
+                } elseif ($tooClose) {
+                    Write-Host "  .. $instId : cena $price > min $minBuyPx (nuzhno -$stepPct% ot entry $entryPx) -- propuskaem" -ForegroundColor DarkGray
                 } else {
                     Write-Host "  >> $instId : chasovoy dip $dropPct% -- Fibo dokupka #$nextBuy!" -ForegroundColor Red
                     Place-FiboTrailingBuy -instId $instId -price $price -dropPct $dropPct -info $info -config $config

@@ -8,19 +8,19 @@
   "dryRun": false,
 
   "instruments": [
-    "ETH-USDT-SWAP",
-    "DOGE-USDT-SWAP"
+    "HYPE-USDT-SWAP",
+    "UNI-USDT-SWAP"
   ],
 
-  "hourly_dip_threshold_pct": -1.0,
+  "hourly_dip_threshold_pct": -1.5,
   "averaging_step_pct": 1.0,
 
   "entry_trail_callback_pct": 0.3,
   "buy_size_usd": 0.5,
-  "leverage": 10,
+  "leverage": 8,
   "mgnMode": "isolated",
 
-  "trailing_tp_callback_pct": 0.5,
+  "trailing_tp_callback_pct": 0.2,
   "tp_activate_pct": 2.0,
 
   "log_file": ".\\trades.csv",

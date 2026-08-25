@@ -20,10 +20,10 @@
   "leverage": 10,
   "mgnMode": "isolated",
 
-  "trailing_tp_callback_pct": 0.5,
+  "trailing_tp_callback_pct": 0.2,
   "tp_activate_pct": 2.0,
 
   "log_file": ".\\trades.csv",
 
-  "rerun_interval_s": 2
+  "rerun_interval_s": 3
 }

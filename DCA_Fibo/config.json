@@ -13,15 +13,17 @@
 
   "hourly_dip_threshold_pct": -1.0,
 
-  "entry_trail_callback_pct": 0.3,
+  "entry_trail_callback_pct": 0.5,
 
-  "buy_size_usd": 0.1,
+  "buy_size_usd": 0.2,
   "max_fibo_buys": 10,
+  "averaging_step_pct": 1.0,
+  "close_cooldown_sec": 30,
   "leverage": 10,
   "mgnMode": "isolated",
 
   "trailing_tp_callback_pct": 0.5,
-  "tp_activate_pct": 3.0,
+  "tp_activate_pct": 2.0,
 
   "log_file": ".\\trades.csv",
 
